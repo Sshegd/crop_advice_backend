@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+firebase-admin
+google-cloud-translate
+google-auth
+google-auth-oauthlib
+joblib
+scikit-learn
+numpy

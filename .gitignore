@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+venv/
+.env.*
+.idea/
+.vscode/
+
+# Keys (never commit real keys)
+serviceAccountKey.json
+google_translate_key.json
+
+# Models if you want them private (you can upload separately to Railway)
+# models/*.pkl
