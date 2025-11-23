@@ -1,231 +1,349 @@
 # ml_advisor.py
 from typing import List, Dict, Any
+import os
 import numpy as np
 import joblib
 
+
+# ----------------- Helper data for new crop advisory -----------------
+
+# Approximate nutrient/pH/humidity profiles per soil type
+SOIL_PROFILES = {
+    "Red Soil":      {"N": 80, "P": 40, "K": 40, "ph": 6.5, "humidity": 70},
+    "Black Soil":    {"N": 90, "P": 45, "K": 50, "ph": 7.2, "humidity": 65},
+    "Laterite":      {"N": 75, "P": 35, "K": 40, "ph": 5.8, "humidity": 75},
+    "Alluvial":      {"N": 85, "P": 42, "K": 45, "ph": 7.0, "humidity": 68},
+    "Sandy":         {"N": 60, "P": 30, "K": 30, "ph": 6.2, "humidity": 60},
+    "Loamy":         {"N": 88, "P": 44, "K": 46, "ph": 6.8, "humidity": 72},
+}
+
+DEFAULT_PROFILE = {"N": 85, "P": 40, "K": 40, "ph": 6.6, "humidity": 70}
+
+# Advice templates per crop label (from Kaggle dataset labels)
+CROP_TEMPLATES: Dict[str, Dict[str, str]] = {
+    "rice": {
+        "water": "Maintain standing water of 2–5 cm in early growth. Prefer puddled fields or controlled flooding.",
+        "nutrient": "Apply 10–12 t/ha FYM before puddling. Use split N application (basal, tillering, panicle initiation) with balanced P & K.",
+        "seed": "Use certified high-yielding varieties; ensure proper seed treatment and 2–3 cm sowing depth.",
+        "other": "Keep fields weed-free in first 30–40 days; monitor for blast and BPH regularly.",
+    },
+    "wheat": {
+        "water": "Give first irrigation at CRI stage (18–21 days) then at tillering, jointing, heading and milking depending on rainfall.",
+        "nutrient": "Apply basal NPK at sowing; split remaining N in 2–3 doses. Avoid excess N to prevent lodging.",
+        "seed": "Use bold, disease-free seeds of region-specific varieties; maintain recommended seed rate and spacing.",
+        "other": "Timely sowing and weed management within 20–25 days are crucial for good yield.",
+    },
+    "maize": {
+        "water": "Ensure adequate moisture at germination, tasseling and grain filling. Avoid waterlogging.",
+        "nutrient": "Apply FYM + basal NPK and top-dress N in 2–3 splits. Zinc deficiency is common; apply ZnSO4 if needed.",
+        "seed": "Select hybrid seed suitable for your season; maintain proper plant population.",
+        "other": "Practice earthing-up and monitor for stem borer and foliar diseases.",
+    },
+    "chickpea": {
+        "water": "Generally grown on conserved soil moisture; 1–2 life-saving irrigations at flowering/pod filling if needed.",
+        "nutrient": "Apply basal P and moderate N; inoculate seed with Rhizobium culture for better nodulation.",
+        "seed": "Use wilt-tolerant varieties; treat seed against seed-borne diseases.",
+        "other": "Avoid waterlogging; practice wider spacing in heavy soils.",
+    },
+    "mango": {
+        "water": "Irrigate young plants frequently; for bearing trees, irrigate at critical fruit development stages and avoid water stress.",
+        "nutrient": "Apply FYM + NPK based on tree age, split between pre- and post-monsoon.",
+        "seed": "Use grafted plants of recommended varieties; plant on raised pits with good drainage.",
+        "other": "Regular pruning and pest/disease monitoring are essential for quality fruits.",
+    },
+    "banana": {
+        "water": "Requires uniform moisture; adopt drip or basin irrigation. Avoid moisture stress especially during bunch initiation.",
+        "nutrient": "High feeder crop – follow scheduled NPK fertigation plus FYM/compost mulching.",
+        "seed": "Use tissue-cultured, disease-free planting material of high-yielding clones.",
+        "other": "Provide propping, de-suckering and leaf sanitation to reduce disease pressure.",
+    },
+    # Add more crops as needed; others fall back to generic template
+}
+
+GENERIC_TEMPLATE = {
+    "water": "Maintain adequate soil moisture without waterlogging; adjust based on rainfall and crop stage.",
+    "nutrient": "Apply well-decomposed FYM before planting and follow a balanced NPK schedule with 2–3 split applications.",
+    "seed": "Use certified, disease-free seeds or planting material of recommended high-yielding varieties.",
+    "other": "Monitor pests and diseases regularly; keep field weed-free, especially in early growth stages.",
+}
+
+
+# ----------------- New crop advisor (ML-based) -----------------
+
+
 class NewCropAdvisor:
     """
-    ML-based crop recommendation.
-    Assumes `new_crop_model.pkl` is a scikit-learn classifier that predicts crop_name
-    and has predict_proba for probabilities.
-    Encoders.pkl should contain LabelEncoders / OneHotEncoders, etc.
+    ML-based crop recommendation using RandomForest model trained
+    on Kaggle Crop Recommendation dataset (N, P, K, temperature, humidity, pH, rainfall).
+
+    Model is saved as new_crop_model.pkl using train_new_crop_model.py
+    and loaded here as a scikit-learn Pipeline.
     """
-    def __init__(self, model_path: str = "new_crop_model.pkl", encoders_path: str = "encoders.pkl"):
-        self.model = joblib.load(model_path)
-        self.encoders = joblib.load(encoders_path)
 
-    def _encode_features(self, payload: Dict[str, Any]) -> np.ndarray:
-        """
-        Turn incoming JSON into the feature vector for the ML model.
-        You must match this with how you trained your model.
-        Example features: district, taluk, soilType, farmSizeAcre, avgRainfall, avgTemp, etc.
-        """
-        # Example – adapt to your training pipeline
-        district = payload.get("district", "")
-        taluk = payload.get("taluk", "")
-        soil_type = payload.get("soilType", "")
-        farm_size = float(payload.get("farmSizeAcre", 1.0))
-        avg_rainfall = float(payload.get("avgRainfall", 2000))
-        avg_temp = float(payload.get("avgTemp", 26))
+    def __init__(self, model_path: str = "new_crop_model.pkl"):
+        self.model_path = model_path
+        self.model_available = False
+        self.model = None
 
-        # categorical encoders from encoders.pkl (LabelEncoder, OneHotEncoder, etc.)
-        dist_idx = self.encoders["district"].transform([district])[0]
-        taluk_idx = self.encoders["taluk"].transform([taluk])[0]
-        soil_idx = self.encoders["soilType"].transform([soil_type])[0]
+        if os.path.exists(self.model_path):
+            try:
+                self.model = joblib.load(self.model_path)
+                self.model_available = True
+                print("Loaded new crop model from", self.model_path)
+            except Exception as e:
+                print("Failed to load model:", e)
+        else:
+            print("new_crop_model.pkl not found; using fallback recommendations.")
 
-        X = np.array([[dist_idx, taluk_idx, soil_idx, farm_size, avg_rainfall, avg_temp]])
-        return X
+    def _build_features_from_payload(self, payload: Dict[str, Any]) -> np.ndarray:
+        soil_type = (payload.get("soilType") or "").strip()
+        profile = SOIL_PROFILES.get(soil_type, DEFAULT_PROFILE)
+
+        N = float(profile["N"])
+        P = float(profile["P"])
+        K = float(profile["K"])
+        ph = float(profile["ph"])
+        humidity = float(profile["humidity"])
+
+        temperature = float(payload.get("avgTemp", 26.0))
+        rainfall = float(payload.get("avgRainfall", 2000.0))
+
+        return np.array([[N, P, K, temperature, humidity, ph, rainfall]])
 
     def recommend(self, payload: Dict[str, Any], top_k: int = 3) -> List[Dict[str, Any]]:
-        X = self._encode_features(payload)
+        """
+        payload: {
+          "district": "...",
+          "taluk": "...",
+          "soilType": "Red Soil",
+          "farmSizeAcre": 1.0,
+          "avgRainfall": 2300,
+          "avgTemp": 27
+        }
+        """
+        if not self.model_available:
+            # Fallback simple list if model is not present
+            fallback = ["rice", "arecanut", "banana"]
+            recommendations = []
+            for name in fallback:
+                tmpl = CROP_TEMPLATES.get(name, GENERIC_TEMPLATE)
+                recommendations.append(
+                    {
+                        "cropName": name,
+                        "score": 0.0,
+                        "waterManagement": tmpl["water"],
+                        "nutrientManagement": tmpl["nutrient"],
+                        "seedSelection": tmpl["seed"],
+                        "otherAdvice": tmpl["other"],
+                    }
+                )
+            return recommendations
 
-        # predicted crop probabilities
+        X = self._build_features_from_payload(payload)
         proba = self.model.predict_proba(X)[0]
         classes = self.model.classes_
 
-        # sort by probability
+        # Top-k crops by probability
         idx_sorted = np.argsort(proba)[::-1][:top_k]
 
-        recommendations = []
+        recommendations: List[Dict[str, Any]] = []
         for idx in idx_sorted:
-            crop_name = classes[idx]
+            crop_label = str(classes[idx])
             score = float(proba[idx])
+            tmpl = CROP_TEMPLATES.get(crop_label, GENERIC_TEMPLATE)
 
-            # These parts are *templated text* based on the selected crop.
-            # The selection itself (crop_name + score) is ML-based.
-            water_advice = (
-                f"For {crop_name}, maintain soil moisture without waterlogging. "
-                f"Use drip or basin irrigation suited to {payload.get('soilType', 'your soil')}."
+            recommendations.append(
+                {
+                    "cropName": crop_label,
+                    "score": score,
+                    "waterManagement": tmpl["water"],
+                    "nutrientManagement": tmpl["nutrient"],
+                    "seedSelection": tmpl["seed"],
+                    "otherAdvice": tmpl["other"],
+                }
             )
-            nutrient_advice = (
-                f"Follow a balanced NPK schedule for {crop_name}. Apply well-decomposed FYM "
-                f"before planting and split application of N and K during growth."
-            )
-            seed_advice = (
-                f"Choose high-yielding, disease-tolerant varieties of {crop_name} from certified nurseries/seed dealers. "
-                f"Use healthy seed/seedlings only."
-            )
-            other_advice = (
-                f"Plan timely weed management and pest-disease monitoring for {crop_name}. "
-                f"Use mulching and organic matter to improve soil structure."
-            )
-
-            recommendations.append({
-                "cropName": crop_name,
-                "score": score,
-                "waterManagement": water_advice,
-                "nutrientManagement": nutrient_advice,
-                "seedSelection": seed_advice,
-                "otherAdvice": other_advice,
-            })
 
         return recommendations
 
 
+# ----------------- Existing crop advisor (Firebase logs) -----------------
+
+
 class ExistingCropAdvisor:
     """
-    Advisory using Firebase activity logs.
-    Here we don’t force ML; you can later plug in a trained model.
-    For now we *summarise* management gaps using heuristics on logs.
-    """
-    def __init__(self):
-        # If you train an ML model for existing crop management,
-        # load it here, e.g. self.model = joblib.load("existing_crop_model.pkl")
-        pass
+    Advisory using Firebase activity logs for the existing crop.
 
-    def advise(self, farm_logs: List[Dict[str, Any]], farm_details: Dict[str, Any]) -> Dict[str, Any]:
+    Input: list of log dicts (flattened from Users/{uid}/farmActivityLogs/primary_crop)
+    and farm_details dict from Users/{uid}/farmDetails.
+
+    Output: structured advice grouped by management area.
+    """
+
+    def __init__(self):
+        pass  # placeholder if you later load an ML model
+
+    def advise(
+        self, farm_logs: List[Dict[str, Any]], farm_details: Dict[str, Any]
+    ) -> Dict[str, Any]:
         crop_name = farm_details.get("cropName", "crop")
 
-        # Pre-planting checks
-        soil_test_done = any(
-            log.get("subActivity") == "soil_preparation" and log.get("soilTestDone")
-            for log in farm_logs
+        # Extract important log entries by subActivity
+        soil_prep_log = next(
+            (log for log in farm_logs if log.get("subActivity") == "soil_preparation"),
+            None,
         )
-
-        base_fertilizer = None
-        for log in farm_logs:
-            if log.get("subActivity") == "soil_preparation":
-                base_fertilizer = log.get("baseFertilizer")
-                break
-
-        # Water management logs
-        irrigation_log = next(
+        water_log = next(
             (log for log in farm_logs if log.get("subActivity") == "water_management"),
-            None
+            None,
         )
-
-        # Nutrient management logs
-        nutrient_logs = next(
-            (log for log in farm_logs if log.get("subActivity") == "nutrient_management"),
-            None
+        nutrient_log = next(
+            (
+                log
+                for log in farm_logs
+                if log.get("subActivity") == "nutrient_management"
+            ),
+            None,
         )
-
-        # Pest / disease logs
         protection_log = next(
-            (log for log in farm_logs if log.get("subActivity") == "crop_protection_maintenance"),
-            None
+            (
+                log
+                for log in farm_logs
+                if log.get("subActivity") == "crop_protection_maintenance"
+            ),
+            None,
         )
-
-        # Harvest & marketing logs
         harvest_log = next(
-            (log for log in farm_logs if log.get("subActivity") == "harvesting_cut_gather"),
-            None
+            (
+                log
+                for log in farm_logs
+                if log.get("subActivity") == "harvesting_cut_gather"
+            ),
+            None,
         )
         marketing_log = next(
-            (log for log in farm_logs if log.get("subActivity") == "marketing_distribution"),
-            None
+            (
+                log
+                for log in farm_logs
+                if log.get("subActivity") == "marketing_distribution"
+            ),
+            None,
         )
 
-        crop_management_tips = []
-        nutrient_tips = []
-        water_tips = []
-        protection_tips = []
-        marketing_tips = []
+        crop_management_tips: List[str] = []
+        nutrient_tips: List[str] = []
+        water_tips: List[str] = []
+        protection_tips: List[str] = []
+        marketing_tips: List[str] = []
 
-        # ---------- CROP / SOIL MANAGEMENT ----------
-        if not soil_test_done:
-            crop_management_tips.append(
-                "Soil testing not found in your logs. Conduct a soil test to fine-tune fertilizer doses."
-            )
-        else:
-            st = next(log for log in farm_logs if log.get("subActivity") == "soil_preparation")
-            soil = st.get("soilTest", {})
-            pH = soil.get("pH")
-            if pH and (pH < 5.5 or pH > 7.5):
+        # -------- Soil & crop management --------
+        if soil_prep_log:
+            soil_test_done = soil_prep_log.get("soilTestDone", False)
+            base_fert = soil_prep_log.get("baseFertilizer")
+            if soil_test_done:
+                soil = soil_prep_log.get("soilTest", {})
+                pH = soil.get("pH")
+                if pH is not None and (pH < 5.5 or pH > 7.5):
+                    crop_management_tips.append(
+                        f"Recorded soil pH is {pH}. Move it towards neutral using lime (for low pH) "
+                        "or organic matter/gypsum (for high pH) as per local recommendation."
+                    )
+                else:
+                    crop_management_tips.append(
+                        "Soil testing is recorded. Continue testing every 2–3 years to refine fertilizer doses."
+                    )
+            else:
                 crop_management_tips.append(
-                    f"Your recorded soil pH is {pH}. Consider liming (for low pH) or organic matter addition (for high pH) to bring it near neutral."
+                    "No soil testing found in your logs. Consider doing a soil test before next season to "
+                    "optimize fertilizer use and improve yield."
                 )
 
-        if base_fertilizer:
+            if base_fert:
+                crop_management_tips.append(
+                    f"Base FYM application of {base_fert.get('quantity','recommended dose')} on "
+                    f"{base_fert.get('date','recorded date')} is good. Ensure thorough mixing into the soil."
+                )
+        else:
             crop_management_tips.append(
-                f"Base fertilizer FYM of {base_fertilizer.get('quantity', 'recommended dose')} on {base_fertilizer.get('date', '')} is good. "
-                "Ensure it is well decomposed and uniformly applied."
+                "No soil preparation activity found. Ensure proper ploughing, levelling and FYM application "
+                "before planting for better root growth."
             )
 
-        # ---------- WATER MANAGEMENT ----------
-        if irrigation_log:
-            freq = irrigation_log.get("frequencyDays")
-            methods = ", ".join(irrigation_log.get("methods", []))
+        # -------- Water management --------
+        if water_log:
+            freq = water_log.get("frequencyDays")
+            methods = ", ".join(water_log.get("methods", []))
             water_tips.append(
-                f"Irrigation is recorded every {freq} days using {methods}. "
-                "Adjust frequency based on rainfall and soil moisture; reduce during heavy rains and increase during dry spells."
+                f"Irrigation every {freq} days using {methods} is recorded. "
+                "Adjust frequency based on rainfall and soil moisture; avoid both drought and waterlogging."
             )
+            if freq and freq > 10:
+                water_tips.append(
+                    "For young plants, long irrigation gaps (>10 days) may stress the crop. "
+                    "Consider slightly shorter intervals during dry periods."
+                )
         else:
             water_tips.append(
-                "No water management logs found. Record irrigation schedule and ensure young plants never face moisture stress."
+                "No water management logs found. Record irrigation schedule and ensure the crop "
+                "does not face moisture stress during critical stages."
             )
 
-        # ---------- NUTRIENT MANAGEMENT ----------
-        if nutrient_logs and nutrient_logs.get("applications"):
-            apps = nutrient_logs["applications"]
-            urea_apps = [a for a in apps if "urea" in a.get("fertilizerName", "").lower()]
-            dap_apps = [a for a in apps if "dap" in a.get("fertilizerName", "").lower()]
+        # -------- Nutrient management --------
+        if nutrient_log and nutrient_log.get("applications"):
+            apps = nutrient_log["applications"]
+            names = [a.get("fertilizerName", "").lower() for a in apps]
 
-            if urea_apps:
+            if any("urea" in n for n in names):
                 nutrient_tips.append(
-                    f"Urea application of {urea_apps[0].get('quantity','recommended dose')} is planned. "
-                    "Split applications and avoid applying before heavy rain to reduce N loss."
+                    "Urea application is planned. Apply in split doses and incorporate into soil or irrigate immediately "
+                    "to reduce nitrogen loss."
                 )
-            if dap_apps:
+            if any("dap" in n for n in names):
                 nutrient_tips.append(
-                    "You have planned DAP application. Avoid excessive DAP to prevent P buildup; balance with K and organic manure."
+                    "DAP is planned. Avoid excessive DAP; balance with potash and organic manures to prevent nutrient imbalance."
                 )
 
             nutrient_tips.append(
-                "Monitor leaf colour and growth; use periodic soil/leaf tests to refine future fertilizer plans."
+                "Keep a yearly nutrient plan with 2–3 split applications of N and K plus basal P and FYM. "
+                "Use soil/leaf test reports to fine-tune doses."
             )
         else:
             nutrient_tips.append(
-                "No fertilizer schedule recorded. Prepare a yearly nutrient plan with split applications of N, P, K and organic manures."
+                "No fertilizer application found in logs. Prepare a crop-wise fertilizer schedule and record each application."
             )
 
-        # ---------- PEST & DISEASE ----------
+        # -------- Crop protection --------
         if protection_log and protection_log.get("controlTaken"):
+            prod = protection_log.get("controlDetails", {}).get("productName", "")
+            pest = protection_log.get("pestDiseaseName", "")
             protection_tips.append(
-                f"Pest/disease issue logged: {protection_log.get('pestDiseaseName','')}. "
-                f"Control with {protection_log.get('controlDetails', {}).get('productName','recommended bio/chemical').title()} is recorded. "
-                "Continue regular scouting and use IPM: clean cultivation, traps, and resistant varieties where possible."
+                f"Pest/disease '{pest}' recorded and control with '{prod}' is noted. "
+                "Continue regular field scouting and follow integrated pest management (IPM) practices."
             )
         else:
             protection_tips.append(
-                "No crop protection record found. Inspect palms regularly for pests/diseases and keep records of any sprays or biocontrols used."
+                "No crop protection records. Inspect the crop weekly for pests and diseases and record any sprays taken."
             )
 
-        # ---------- HARVEST & MARKETING ----------
+        # -------- Harvest & marketing --------
         if harvest_log:
-            yield_qty = harvest_log.get("yieldQuantity")
-            yield_unit = harvest_log.get("yieldUnit", "")
+            qty = harvest_log.get("yieldQuantity")
+            unit = harvest_log.get("yieldUnit", "")
             grade = harvest_log.get("grade", "")
             marketing_tips.append(
-                f"You harvested about {yield_qty} {yield_unit} of grade {grade}. "
-                "Compare yield with local benchmarks; if lower, review water, nutrient and pest management in earlier stages."
+                f"Harvest of about {qty} {unit} (grade {grade}) is recorded. "
+                "Compare this with local average yields to identify improvement scope."
             )
         if marketing_log:
-            price = marketing_log.get("pricePerUnit")
             buyer = marketing_log.get("buyer", "")
+            price = marketing_log.get("pricePerUnit")
+            unit = marketing_log.get("quantityUnit", "")
             marketing_tips.append(
-                f"Recorded sale to {buyer} at ₹{price} per {marketing_log.get('quantityUnit','unit')}. "
-                "Compare prices across local markets and FPOs; explore storage or staggered sales to get better price."
+                f"Sale to {buyer} at ₹{price} per {unit} is recorded. "
+                "Compare prices from different buyers/FPOs and explore storage or staggered sales to improve returns."
+            )
+        if not marketing_log and not harvest_log:
+            marketing_tips.append(
+                "No harvest/marketing data in logs. Record yield and sale details to analyse profitability in future seasons."
             )
 
         return {
