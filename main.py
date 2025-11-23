@@ -3,6 +3,8 @@ import joblib
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+from google_translate import translate_text  # you already have this module
+
 
 from ml_advisor import NewCropAdvisor, ExistingCropAdvisor
 
@@ -51,6 +53,7 @@ class NewCropRequest(BaseModel):
     farmSizeAcre: float
     avgRainfall: float
     avgTemp: float
+    language: Optional[str] = "en"  
 
 
 class NewCropAdvice(BaseModel):
@@ -96,10 +99,20 @@ def info_existing():
 @app.post("/advice/new", response_model=NewCropResponse)
 def get_new_crop_advice(req: NewCropRequest):
     try:
-        rec = new_crop_advisor.recommend(req.dict())
-        return {"recommendations": rec}
+        # Get ML recommendations in English
+        recs = new_crop_advisor.recommend(req.dict())
+        
+        # Auto-translate if language is not English (e.g., 'kn' for Kannada)
+        lang = (req.language or "en").lower()
+        if lang != "en":
+            for r in recs:
+                for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
+                    r[key] = translate_text(r[key], target_language=lang)
+
+        return {"recommendations": recs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # -------------- FRIENDLY GET (NEW CROP) ----------------
@@ -118,3 +131,4 @@ def info_new():
         },
         "note": "This endpoint is meant for API/Android usage, not for direct browser access."
     }
+
