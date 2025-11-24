@@ -172,9 +172,9 @@ class NewCropAdvisor:
 class ExistingCropAdvisor:
 
     def advise(self, logs, farm_details):
-
         crop = farm_details.get("cropName", "Crop")
-        recommendations = {
+
+        rec = {
             "cropManagement": [],
             "nutrientManagement": [],
             "waterManagement": [],
@@ -183,53 +183,89 @@ class ExistingCropAdvisor:
         }
 
         for log in logs:
+            sub = log.get("subActivity", "").strip().lower()
 
-            sub = log.get("subActivity", "")
+            # 🌱 CROP SELECTION
+            if sub == "crop_selection":
+                variety = log.get("varietyName", "")
+                if variety:
+                    rec["cropManagement"].append(f"Selected '{variety}' – ensure certified seedlings and healthy planting material.")
+                else:
+                    rec["cropManagement"].append("Use certified high-yielding seedlings for better establishment.")
 
-            if sub == "soil_preparation":
+            # 🧪 SOIL PREPARATION
+            elif sub == "soil_preparation":
                 soil = log.get("soilTest", {})
                 pH = soil.get("pH")
-                if pH and pH < 6.0:
-                    recommendations["nutrientManagement"].append("Apply lime @ 200 kg/acre to correct soil acidity.")
-                elif pH and pH > 7.5:
-                    recommendations["nutrientManagement"].append("Apply gypsum @ 100 kg/acre to reduce alkalinity.")
+                if pH:
+                    if pH < 6:
+                        rec["nutrientManagement"].append("Soil pH is low — apply lime @ 200 kg/acre.")
+                    elif pH > 7.5:
+                        rec["nutrientManagement"].append("Soil pH is high — apply gypsum @ 100 kg/acre.")
 
-                recommendations["cropManagement"].append("Deep ploughing followed by 2 harrowings ensures good tilth.")
+                base_fert = log.get("baseFertilizer", {})
+                if base_fert:
+                    rec["nutrientManagement"].append(f"Base fertilizer applied: {base_fert.get('name')} {base_fert.get('quantity')}. Continue FYM yearly.")
 
-            if sub == "water_management":
+                rec["cropManagement"].append("Land preparation completed — good foundation for root development.")
+
+            # 🌾 SOWING / PLANTING
+            elif sub == "sowing_planting":
+                method = log.get("plantingMethod", "")
+                rec["cropManagement"].append(f"Planting method: {method}. Maintain proper spacing to avoid overcrowding.")
+
+            # 💧 WATER MANAGEMENT
+            elif sub == "water_management":
                 freq = log.get("frequencyDays")
-                method = ", ".join(log.get("methods", []))
-                recommendations["waterManagement"].append(f"Irrigate every {freq} days using {method} to avoid moisture stress.")
+                methods = ", ".join(log.get("methods", []))
+                rec["waterManagement"].append(f"Irrigate every {freq} days using {methods} to prevent moisture stress.")
 
-            if sub == "nutrient_management":
+            # 🧪 FERTILIZER / NPK DOSES
+            elif sub == "nutrient_management":
                 for app in log.get("applications", []):
-                    fert = app.get("fertilizerName", "")
-                    qty = app.get("quantity", "")
-                    rec = f"{fert} applied @ {qty}. Schedule next dose after {app.get('gapDays')} days."
-                    recommendations["nutrientManagement"].append(rec)
+                    nm = app.get("fertilizerName")
+                    qty = app.get("quantity")
+                    gap = app.get("gapDays")
+                    rec["nutrientManagement"].append(
+                        f"{nm} applied @ {qty}. Next dose after {gap} days."
+                    )
 
-            if sub == "crop_protection_maintenance":
-                pest = log.get("pestDiseaseName")
-                product = log.get("controlDetails", {}).get("productName")
-                method = log.get("controlDetails", {}).get("doseMethod")
-                recommendations["protectionManagement"].append(
-                    f"Pest detected: {pest}. Recommended: {product}, Dose: {method}."
+            # 🛡 PEST / DISEASE CONTROL
+            elif sub == "crop_protection_maintenance":
+                pest = log.get("pestDiseaseName", "")
+                prod = log.get("controlDetails", {}).get("productName")
+                dose = log.get("controlDetails", {}).get("doseMethod")
+                rec["protectionManagement"].append(
+                    f"{pest} detected — use {prod}, dosage {dose}."
                 )
 
-            if sub == "harvesting_cut_gather":
-                yld = log.get("yieldQuantity")
-                recommendations["harvestMarketing"].append(f"Yield recorded: {yld} kg. Grade produce before selling.")
+            # 🌾 HARVEST
+            elif sub == "harvesting_cut_gather":
+                qty = log.get("yieldQuantity")
+                rec["harvestMarketing"].append(
+                    f"Yield recorded: {qty} kg. Dry properly and grade nuts before storing."
+                )
 
-            if sub == "marketing_distribution":
+            # 💰 MARKETING
+            elif sub == "marketing_distribution":
                 buyer = log.get("buyer")
-                recommendations["harvestMarketing"].append(f"Sold to {buyer}. Compare market prices weekly to gain profit.")
+                rec["harvestMarketing"].append(
+                    f"Sold to {buyer}. Compare nearby market prices weekly to maximize profit."
+                )
 
-        # Fallback for empty categories
-        for k in recommendations:
-            if not recommendations[k]:
-                recommendations[k].append("No recent activity record found. Continue best practices.")
+        # ---- Fallbacks only if category was not filled ----
+        if not rec["cropManagement"]:
+            rec["cropManagement"].append("Continue land maintenance and timely intercultivation.")
+        if not rec["nutrientManagement"]:
+            rec["nutrientManagement"].append("Follow season-wise NPK schedule based on soil test.")
+        if not rec["waterManagement"]:
+            rec["waterManagement"].append("Maintain irrigation based on soil moisture.")
+        if not rec["protectionManagement"]:
+            rec["protectionManagement"].append("Monitor for pests weekly and apply bio-control when symptoms appear.")
+        if not rec["harvestMarketing"]:
+            rec["harvestMarketing"].append("Harvest at maturity and store in dry ventilated room.")
 
         return {
             "cropName": crop,
-            **recommendations
+            **rec
         }
