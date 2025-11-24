@@ -53,6 +53,8 @@ class NewCropAdvice(BaseModel):
     nutrientManagement: str
     seedSelection: str
     otherAdvice: str
+    avgMarketPricePerQuintal: Optional[int] = None
+    estimatedNetProfitPerAcre: Optional[int] = None
 
 
 class NewCropResponse(BaseModel):
@@ -103,20 +105,20 @@ def existing_crop_advice(req: ExistingCropRequest):
         result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
         lang = req.language.lower()
 
-        crop_name = result["cropName"].lower()
-        if lang != "en":
-            # Kannada crop name replacement
-            if crop_name in CROP_NAME_KN:
-                result["cropName"] = CROP_NAME_KN[crop_name]
+       if lang != "en":
+            for key, val in result.items():
+                if isinstance(val, list):
+                    translated_items = []
+                    for sentence in val:
+                        try:
+                            translated_items.append(translate_text(sentence, target_language=lang))
+                        except:
+                            translated_items.append(sentence)
+                    result[key] = translated_items
 
-            # Translate advisory sentences
-            translated = []
-            for x in result[key]:
-                 try:
-                    translated.append(translate_text(x, target_language=lang))
-                except:
-                    translated.append(x)   # fallback English
-            result[key] = translated
+            # Translate crop name using dictionary
+            crop_lower = result["cropName"].lower()
+            result["cropName"] = CROP_NAME_KN.get(crop_lower, result["cropName"])
 
         return result
 
@@ -255,22 +257,20 @@ def new_crop_advice(req: NewCropRequest):
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
         if req.language.lower() != "en":
-            for r in ranked:
-                # Change crop name to Kannada if available
-                cname = r["cropName"].lower()
-                if cname in CROP_NAME_KN:
-                    r["cropName"] = CROP_NAME_KN[cname]
+           for r in ranked:
+                # Translate crop name using dictionary (not API)
+                crop_lower = r["cropName"].lower()
+                r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
 
-        # Translate sentences
-                for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
-                    try:
-                        r[key] = translate_text(r[key], target_language=req.language)
-                    except:
-                        # fallback to English instead of error
-                        pass
+                # Translate all advisory sentences safely
+                if lang != "en":
+                    for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
+                        try:
+                            r[key] = translate_text(r[key], target_language=lang)
+                        except:
+                            pass  # fallback if translation fails
 
-
-        return {"recommendations": ranked}
+            return {"recommendations": ranked[:4]}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -280,6 +280,7 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
