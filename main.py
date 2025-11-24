@@ -54,76 +54,13 @@ class NewCropAdvice(BaseModel):
     seedSelection: str
     otherAdvice: str
     avgMarketPricePerQuintal: Optional[int] = None
+    expectedYieldPerAcreQuintal: Optional[int] = None
     estimatedNetProfitPerAcre: Optional[int] = None
+    priceSource: Optional[str] = None
 
 
 class NewCropResponse(BaseModel):
     recommendations: List[NewCropAdvice]
-
-
-# ============ KNOWLEDGE BASE FOR KARNATAKA =================
-locality_crops = {
-    "uttara kannada": ["areca nut", "pepper", "paddy", "banana", "turmeric"],
-    "belagavi": ["sugarcane", "soybean", "maize", "paddy", "wheat"],
-    "shivamogga": ["areca nut", "pepper", "paddy", "banana", "ginger"],
-    "dharwad": ["soybean", "cotton", "maize", "groundnut", "sunflower"],
-    "haveri": ["cotton", "chilli", "maize", "paddy", "jowar"],
-    "ballari": ["pomegranate", "groundnut", "sunflower", "cotton"],
-    "chikkamagaluru": ["coffee", "pepper", "areca nut", "banana"],
-    "mysuru": ["cotton", "ragi", "paddy", "groundnut", "sugarcane"],
-    "mandya": ["sugarcane", "paddy", "mulberry", "banana"],
-    "tumakuru": ["ragi", "groundnut", "pigeon pea", "tomato"],
-}
-
-soil_crops = {
-    "red soil": ["areca nut", "pepper", "cotton", "groundnut", "ragi", "paddy"],
-    "black soil": ["cotton", "soybean", "turmeric", "paddy", "banana"],
-    "laterite": ["areca nut", "pepper", "coffee", "banana"],
-    "alluvial": ["paddy", "sugarcane", "banana", "vegetables"],
-    "sandy": ["groundnut", "onion", "melon", "cucumber"],
-}
-
-temp_range = {
-    "areca nut": (18, 32), "pepper": (20, 30), "coffee": (15, 28),
-    "banana": (15, 35), "cotton": (22, 32), "soybean": (20, 32),
-    "maize": (20, 32), "paddy": (18, 38), "groundnut": (20, 36),
-    "turmeric": (20, 30), "sugarcane": (20, 35),
-}
-
-rainfall_range = {
-    "areca nut": (2000, 3500), "pepper": (2000, 3000), "coffee": (1800, 3000),
-    "paddy": (900, 2500), "cotton": (600, 1200), "soybean": (700, 1200),
-    "maize": (500, 900), "groundnut": (500, 1200), "banana": (1100, 3000),
-    "turmeric": (900, 1800), "sugarcane": (1100, 2200),
-}
-
-
-# ================ EXISTING CROP ADVICE =================
-@app.post("/advice/existing", response_model=ExistingCropResponse)
-def existing_crop_advice(req: ExistingCropRequest):
-    try:
-        result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
-        lang = req.language.lower()
-
-        if lang != "en":
-            for key, val in result.items():
-                if isinstance(val, list):
-                    translated_items = []
-                    for sentence in val:
-                        try:
-                            translated_items.append(translate_text(sentence, target_language=lang))
-                        except:
-                            translated_items.append(sentence)
-                    result[key] = translated_items
-
-            # Translate crop name using dictionary
-            crop_lower = result["cropName"].lower()
-            result["cropName"] = CROP_NAME_KN.get(crop_lower, result["cropName"])
-
-        return result
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
 market_price_ktk = {
@@ -199,11 +136,79 @@ CROP_NAME_KN = {
 }
 
 
+
+# ============ KNOWLEDGE BASE FOR KARNATAKA =================
+locality_crops = {
+    "uttara kannada": ["areca nut", "pepper", "paddy", "banana", "turmeric"],
+    "belagavi": ["sugarcane", "soybean", "maize", "paddy", "wheat"],
+    "shivamogga": ["areca nut", "pepper", "paddy", "banana", "ginger"],
+    "dharwad": ["soybean", "cotton", "maize", "groundnut", "sunflower"],
+    "haveri": ["cotton", "chilli", "maize", "paddy", "jowar"],
+    "ballari": ["pomegranate", "groundnut", "sunflower", "cotton"],
+    "chikkamagaluru": ["coffee", "pepper", "areca nut", "banana"],
+    "mysuru": ["cotton", "ragi", "paddy", "groundnut", "sugarcane"],
+    "mandya": ["sugarcane", "paddy", "mulberry", "banana"],
+    "tumakuru": ["ragi", "groundnut", "pigeon pea", "tomato"],
+}
+
+soil_crops = {
+    "red soil": ["areca nut", "pepper", "cotton", "groundnut", "ragi", "paddy"],
+    "black soil": ["cotton", "soybean", "turmeric", "paddy", "banana"],
+    "laterite": ["areca nut", "pepper", "coffee", "banana"],
+    "alluvial": ["paddy", "sugarcane", "banana", "vegetables"],
+    "sandy": ["groundnut", "onion", "melon", "cucumber"],
+}
+
+temp_range = {
+    "areca nut": (18, 32), "pepper": (20, 30), "coffee": (15, 28),
+    "banana": (15, 35), "cotton": (22, 32), "soybean": (20, 32),
+    "maize": (20, 32), "paddy": (18, 38), "groundnut": (20, 36),
+    "turmeric": (20, 30), "sugarcane": (20, 35),
+}
+
+rainfall_range = {
+    "areca nut": (2000, 3500), "pepper": (2000, 3000), "coffee": (1800, 3000),
+    "paddy": (900, 2500), "cotton": (600, 1200), "soybean": (700, 1200),
+    "maize": (500, 900), "groundnut": (500, 1200), "banana": (1100, 3000),
+    "turmeric": (900, 1800), "sugarcane": (1100, 2200),
+}
+
+
+# ================ EXISTING CROP ADVICE =================
+@app.post("/advice/existing", response_model=ExistingCropResponse)
+def existing_crop_advice(req: ExistingCropRequest):
+    try:
+        result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
+        lang = req.language.lower()
+
+        if lang != "en":
+            crop_lower = result["cropName"].lower()
+            result["cropName"] = CROP_NAME_KN.get(crop_lower, result["cropName"])
+
+            for key, val in result.items():
+                if isinstance(val, list):
+                    translated = []
+                    for sentence in val:
+                        try:
+                            translated.append(translate_text(sentence, target_language=lang))
+                        except:
+                            translated.append(sentence)
+                    result[key] = translated
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
     try:
         base_recs = new_crop_advisor.recommend(req.dict(), top_k=6)
+        lang = req.language.lower()
 
         district = req.district.lower()
         soil = req.soilType.lower()
@@ -230,7 +235,7 @@ def new_crop_advice(req: NewCropRequest):
                     score += 0.25
 
             r["score"] = round(score, 3)
-            ranked.append(r)
+            
 
             # ⭐ MARKET PRICE
             price = market_price_ktk.get(crop)
@@ -256,21 +261,17 @@ def new_crop_advice(req: NewCropRequest):
 
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
-        if req.language.lower() != "en":
-           for r in ranked:
-                # Translate crop name using dictionary (not API)
+        if lang != "en":
+            for r in ranked:
                 crop_lower = r["cropName"].lower()
                 r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
+                for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
+                    try:
+                        r[key] = translate_text(r[key], target_language=lang)
+                    except:
+                        pass
 
-                # Translate all advisory sentences safely
-                if lang != "en":
-                    for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
-                        try:
-                            r[key] = translate_text(r[key], target_language=lang)
-                        except:
-                            pass  # fallback if translation fails
-
-            return {"recommendations": ranked[:4]}
+        return {"recommendations": ranked}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -280,6 +281,7 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
