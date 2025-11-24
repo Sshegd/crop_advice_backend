@@ -170,187 +170,66 @@ class NewCropAdvisor:
 
 
 class ExistingCropAdvisor:
-    """
-    Advisory using Firebase activity logs for the existing crop.
 
-    Input: list of log dicts (flattened from Users/{uid}/farmActivityLogs/primary_crop)
-    and farm_details dict from Users/{uid}/farmDetails.
+    def advise(self, logs, farm_details):
 
-    Output: structured advice grouped by management area.
-    """
+        crop = farm_details.get("cropName", "Crop")
+        recommendations = {
+            "cropManagement": [],
+            "nutrientManagement": [],
+            "waterManagement": [],
+            "protectionManagement": [],
+            "harvestMarketing": []
+        }
 
-    def __init__(self):
-        pass  # placeholder if you later load an ML model
+        for log in logs:
 
-    def advise(
-        self, farm_logs: List[Dict[str, Any]], farm_details: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        crop_name = farm_details.get("cropName", "crop")
+            sub = log.get("subActivity", "")
 
-        # Extract important log entries by subActivity
-        soil_prep_log = next(
-            (log for log in farm_logs if log.get("subActivity") == "soil_preparation"),
-            None,
-        )
-        water_log = next(
-            (log for log in farm_logs if log.get("subActivity") == "water_management"),
-            None,
-        )
-        nutrient_log = next(
-            (
-                log
-                for log in farm_logs
-                if log.get("subActivity") == "nutrient_management"
-            ),
-            None,
-        )
-        protection_log = next(
-            (
-                log
-                for log in farm_logs
-                if log.get("subActivity") == "crop_protection_maintenance"
-            ),
-            None,
-        )
-        harvest_log = next(
-            (
-                log
-                for log in farm_logs
-                if log.get("subActivity") == "harvesting_cut_gather"
-            ),
-            None,
-        )
-        marketing_log = next(
-            (
-                log
-                for log in farm_logs
-                if log.get("subActivity") == "marketing_distribution"
-            ),
-            None,
-        )
-
-        crop_management_tips: List[str] = []
-        nutrient_tips: List[str] = []
-        water_tips: List[str] = []
-        protection_tips: List[str] = []
-        marketing_tips: List[str] = []
-
-        # -------- Soil & crop management --------
-        if soil_prep_log:
-            soil_test_done = soil_prep_log.get("soilTestDone", False)
-            base_fert = soil_prep_log.get("baseFertilizer")
-            if soil_test_done:
-                soil = soil_prep_log.get("soilTest", {})
+            if sub == "soil_preparation":
+                soil = log.get("soilTest", {})
                 pH = soil.get("pH")
-                if pH is not None and (pH < 5.5 or pH > 7.5):
-                    crop_management_tips.append(
-                        f"Recorded soil pH is {pH}. Move it towards neutral using lime (for low pH) "
-                        "or organic matter/gypsum (for high pH) as per local recommendation."
-                    )
-                else:
-                    crop_management_tips.append(
-                        "Soil testing is recorded. Continue testing every 2–3 years to refine fertilizer doses."
-                    )
-            else:
-                crop_management_tips.append(
-                    "No soil testing found in your logs. Consider doing a soil test before next season to "
-                    "optimize fertilizer use and improve yield."
+                if pH and pH < 6.0:
+                    recommendations["nutrientManagement"].append("Apply lime @ 200 kg/acre to correct soil acidity.")
+                elif pH and pH > 7.5:
+                    recommendations["nutrientManagement"].append("Apply gypsum @ 100 kg/acre to reduce alkalinity.")
+
+                recommendations["cropManagement"].append("Deep ploughing followed by 2 harrowings ensures good tilth.")
+
+            if sub == "water_management":
+                freq = log.get("frequencyDays")
+                method = ", ".join(log.get("methods", []))
+                recommendations["waterManagement"].append(f"Irrigate every {freq} days using {method} to avoid moisture stress.")
+
+            if sub == "nutrient_management":
+                for app in log.get("applications", []):
+                    fert = app.get("fertilizerName", "")
+                    qty = app.get("quantity", "")
+                    rec = f"{fert} applied @ {qty}. Schedule next dose after {app.get('gapDays')} days."
+                    recommendations["nutrientManagement"].append(rec)
+
+            if sub == "crop_protection_maintenance":
+                pest = log.get("pestDiseaseName")
+                product = log.get("controlDetails", {}).get("productName")
+                method = log.get("controlDetails", {}).get("doseMethod")
+                recommendations["protectionManagement"].append(
+                    f"Pest detected: {pest}. Recommended: {product}, Dose: {method}."
                 )
 
-            if base_fert:
-                crop_management_tips.append(
-                    f"Base FYM application of {base_fert.get('quantity','recommended dose')} on "
-                    f"{base_fert.get('date','recorded date')} is good. Ensure thorough mixing into the soil."
-                )
-        else:
-            crop_management_tips.append(
-                "No soil preparation activity found. Ensure proper ploughing, levelling and FYM application "
-                "before planting for better root growth."
-            )
+            if sub == "harvesting_cut_gather":
+                yld = log.get("yieldQuantity")
+                recommendations["harvestMarketing"].append(f"Yield recorded: {yld} kg. Grade produce before selling.")
 
-        # -------- Water management --------
-        if water_log:
-            freq = water_log.get("frequencyDays")
-            methods = ", ".join(water_log.get("methods", []))
-            water_tips.append(
-                f"Irrigation every {freq} days using {methods} is recorded. "
-                "Adjust frequency based on rainfall and soil moisture; avoid both drought and waterlogging."
-            )
-            if freq and freq > 10:
-                water_tips.append(
-                    "For young plants, long irrigation gaps (>10 days) may stress the crop. "
-                    "Consider slightly shorter intervals during dry periods."
-                )
-        else:
-            water_tips.append(
-                "No water management logs found. Record irrigation schedule and ensure the crop "
-                "does not face moisture stress during critical stages."
-            )
+            if sub == "marketing_distribution":
+                buyer = log.get("buyer")
+                recommendations["harvestMarketing"].append(f"Sold to {buyer}. Compare market prices weekly to gain profit.")
 
-        # -------- Nutrient management --------
-        if nutrient_log and nutrient_log.get("applications"):
-            apps = nutrient_log["applications"]
-            names = [a.get("fertilizerName", "").lower() for a in apps]
-
-            if any("urea" in n for n in names):
-                nutrient_tips.append(
-                    "Urea application is planned. Apply in split doses and incorporate into soil or irrigate immediately "
-                    "to reduce nitrogen loss."
-                )
-            if any("dap" in n for n in names):
-                nutrient_tips.append(
-                    "DAP is planned. Avoid excessive DAP; balance with potash and organic manures to prevent nutrient imbalance."
-                )
-
-            nutrient_tips.append(
-                "Keep a yearly nutrient plan with 2–3 split applications of N and K plus basal P and FYM. "
-                "Use soil/leaf test reports to fine-tune doses."
-            )
-        else:
-            nutrient_tips.append(
-                "No fertilizer application found in logs. Prepare a crop-wise fertilizer schedule and record each application."
-            )
-
-        # -------- Crop protection --------
-        if protection_log and protection_log.get("controlTaken"):
-            prod = protection_log.get("controlDetails", {}).get("productName", "")
-            pest = protection_log.get("pestDiseaseName", "")
-            protection_tips.append(
-                f"Pest/disease '{pest}' recorded and control with '{prod}' is noted. "
-                "Continue regular field scouting and follow integrated pest management (IPM) practices."
-            )
-        else:
-            protection_tips.append(
-                "No crop protection records. Inspect the crop weekly for pests and diseases and record any sprays taken."
-            )
-
-        # -------- Harvest & marketing --------
-        if harvest_log:
-            qty = harvest_log.get("yieldQuantity")
-            unit = harvest_log.get("yieldUnit", "")
-            grade = harvest_log.get("grade", "")
-            marketing_tips.append(
-                f"Harvest of about {qty} {unit} (grade {grade}) is recorded. "
-                "Compare this with local average yields to identify improvement scope."
-            )
-        if marketing_log:
-            buyer = marketing_log.get("buyer", "")
-            price = marketing_log.get("pricePerUnit")
-            unit = marketing_log.get("quantityUnit", "")
-            marketing_tips.append(
-                f"Sale to {buyer} at ₹{price} per {unit} is recorded. "
-                "Compare prices from different buyers/FPOs and explore storage or staggered sales to improve returns."
-            )
-        if not marketing_log and not harvest_log:
-            marketing_tips.append(
-                "No harvest/marketing data in logs. Record yield and sale details to analyse profitability in future seasons."
-            )
+        # Fallback for empty categories
+        for k in recommendations:
+            if not recommendations[k]:
+                recommendations[k].append("No recent activity record found. Continue best practices.")
 
         return {
-            "cropName": crop_name,
-            "cropManagement": crop_management_tips,
-            "nutrientManagement": nutrient_tips,
-            "waterManagement": water_tips,
-            "protectionManagement": protection_tips,
-            "harvestMarketing": marketing_tips,
+            "cropName": crop,
+            **recommendations
         }
