@@ -103,10 +103,17 @@ def existing_crop_advice(req: ExistingCropRequest):
         result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
         lang = req.language.lower()
 
+        crop_name = result["cropName"].lower()
         if lang != "en":
+            # Kannada crop name replacement
+            if crop_name in CROP_NAME_KN:
+                result["cropName"] = CROP_NAME_KN[crop_name]
+
+            # Translate advisory sentences
             for key in result:
                 if isinstance(result[key], list):
                     result[key] = [translate_text(x, target_language=lang) for x in result[key]]
+
 
         return result
 
@@ -167,6 +174,26 @@ yield_per_acre = {
     "sunflower": 6,
     "chilli": 30,
 }
+# English → Kannada crop names
+CROP_NAME_KN = {
+    "areca nut": "ಅಡಿಕೆ",
+    "banana": "ಬಾಳೆ",
+    "paddy": "ಅಕ್ಕಿ",
+    "pepper": "ಮೆಣಸು",
+    "turmeric": "ಅರಿಶಿನ",
+    "ginger": "ಶುಂಠಿ",
+    "sugarcane": "ಕರಿಬೇವು",
+    "groundnut": "ಶೇಂಗಾ",
+    "maize": "ಮೆಕ್ಕೆಜೋಳ",
+    "ragi": "ರಾಗಿ",
+    "cotton": "ಹತ್ತಿ",
+    "soybean": "ಸೋಯಾಬೀನ್",
+    "coffee": "ಕಾಫಿ",
+    "sunflower": "ಸೂರ್ಯಕಾಂತಿ",
+    "chilli": "ಮೆಣಸಿನಕಾಯಿ",
+}
+
+
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
@@ -202,15 +229,22 @@ def new_crop_advice(req: NewCropRequest):
 
             # ⭐ MARKET PRICE
             price = market_price_ktk.get(crop)
-            r["avgMarketPricePerQuintal"] = price
+            r["avgMarketPricePerQuintal"] = price if price else None
+
 
              # ⭐ PROFIT ESTIMATION
             if price and crop in yield_per_acre and crop in cultivation_cost:
-                gross = price * yield_per_acre[crop]
-                net_profit = gross - cultivation_cost[crop]
+                expected_yield = yield_per_acre[crop]
+                net_profit = (price * expected_yield) - cultivation_cost[crop]
+
+                r["expectedYieldPerAcreQuintal"] = expected_yield
                 r["estimatedNetProfitPerAcre"] = int(net_profit)
             else:
+                r["expectedYieldPerAcreQuintal"] = None
                 r["estimatedNetProfitPerAcre"] = None
+
+            # ⭐ Price source tag
+            r["priceSource"] = "Based on 2025 Karnataka Mandi Avg"
 
             ranked.append(r)
 
@@ -219,8 +253,15 @@ def new_crop_advice(req: NewCropRequest):
 
         if req.language.lower() != "en":
             for r in ranked:
+                # Change crop name to Kannada if available
+                cname = r["cropName"].lower()
+                if cname in CROP_NAME_KN:
+                    r["cropName"] = CROP_NAME_KN[cname]
+
+        # Translate sentences
                 for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
                     r[key] = translate_text(r[key], target_language=req.language)
+
 
         return {"recommendations": ranked}
 
@@ -232,4 +273,5 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
