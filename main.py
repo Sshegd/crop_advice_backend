@@ -105,7 +105,7 @@ def existing_crop_advice(req: ExistingCropRequest):
         result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
         lang = req.language.lower()
 
-       if lang != "en":
+        if lang != "en":
             for key, val in result.items():
                 if isinstance(val, list):
                     translated_items = []
@@ -280,6 +280,7 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
