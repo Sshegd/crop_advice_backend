@@ -118,15 +118,6 @@ def existing_crop_advice(req: ExistingCropRequest):
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
     try:
-         if not new_crop_advisor.model_available:
-            return {"recommendations": [{
-                "cropName": "Arecanut",
-                "score": 0.0,
-                "waterManagement": "Maintain irrigation every 7–10 days.",
-                "nutrientManagement": "Apply FYM + balanced NPK.",
-                "seedSelection": "Use certified seedlings from reliable nurseries.",
-                "otherAdvice": "Monitor mite infection and yellow leaf disease."
-            }]}
         base_recs = new_crop_advisor.recommend(req.dict(), top_k=6)
 
         district = req.district.lower()
@@ -158,19 +149,10 @@ def new_crop_advice(req: NewCropRequest):
 
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
-         if req.language.lower() != "en":
+        if req.language.lower() != "en":
             for r in ranked:
-                full_text = (
-                    f"{r['waterManagement']}||{r['nutrientManagement']}||"
-                    f"{r['seedSelection']}||{r['otherAdvice']}"
-                )
-                translated = translate_text(full_text, target_language=req.language)
-                wm, nm, ss, oa = translated.split("||")
-                r["waterManagement"] = wm
-                r["nutrientManagement"] = nm
-                r["seedSelection"] = ss
-                r["otherAdvice"] = oa
-
+                for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
+                    r[key] = translate_text(r[key], target_language=req.language)
 
         return {"recommendations": ranked}
 
@@ -181,4 +163,4 @@ def new_crop_advice(req: NewCropRequest):
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
-
+ 
