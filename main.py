@@ -110,10 +110,13 @@ def existing_crop_advice(req: ExistingCropRequest):
                 result["cropName"] = CROP_NAME_KN[crop_name]
 
             # Translate advisory sentences
-            for key in result:
-                if isinstance(result[key], list):
-                    result[key] = [translate_text(x, target_language=lang) for x in result[key]]
-
+            translated = []
+            for x in result[key]:
+                 try:
+                    translated.append(translate_text(x, target_language=lang))
+                except:
+                    translated.append(x)   # fallback English
+            result[key] = translated
 
         return result
 
@@ -260,7 +263,11 @@ def new_crop_advice(req: NewCropRequest):
 
         # Translate sentences
                 for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
-                    r[key] = translate_text(r[key], target_language=req.language)
+                    try:
+                        r[key] = translate_text(r[key], target_language=req.language)
+                    except:
+                        # fallback to English instead of error
+                        pass
 
 
         return {"recommendations": ranked}
@@ -273,5 +280,6 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
