@@ -76,23 +76,48 @@ def root():
 
 
 # ---------------- EXISTING CROP POST API ----------------
-@app.post("/advice/existing", response_model=ExistingCropResponse)
-def get_existing_crop_advice(req: ExistingCropRequest):
+@app.post("/advice/existing")
+async def existing_crop_advice(request: ExistingCropAdviceRequest):
     try:
-        advice = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
-        return advice
+        logs = request.activityLogs or []
+        stage_based_messages = []
+
+        # Quick mapping by subActivity if exists
+        for log in logs:
+            sub = log.get("subActivity", "")
+            if sub in existing_rules:
+                stage_based_messages.append(existing_rules[sub])
+
+        # If nothing matched → provide fallback based on farm details
+        if not stage_based_messages:
+            crop = request.farmDetails.get("cropName", "your crop")
+            stage_based_messages.append([
+                f"Maintain irrigation based on soil moisture for {crop}.",
+                f"Apply balanced fertilizer based on recent soil test.",
+                "Monitor pest symptoms weekly.",
+                "Ensure proper drainage to avoid root rot."
+            ])
+
+        # Format response
+        return {
+            "cropName": request.farmDetails.get("cropName", "Crop"),
+            "cropManagement": stage_based_messages[0],
+            "nutrientManagement": stage_based_messages[0],
+            "waterManagement": stage_based_messages[0],
+            "protectionManagement": stage_based_messages[0],
+            "harvestMarketing": stage_based_messages[0]
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "cropName": "Crop",
+            "cropManagement": ["General management recommendations available."],
+            "nutrientManagement": ["General nutrient recommendations available."],
+            "waterManagement": ["Ensure regular irrigation based on crop needs."],
+            "protectionManagement": ["Monitor pest symptoms & act accordingly."],
+            "harvestMarketing": ["Harvest at maturity & follow market standards."]
+        }
 
-
-# -------------- FRIENDLY GET (EXISTING CROP) ----------------
-@app.get("/advice/existing")
-def info_existing():
-    return {
-        "message": "This endpoint only supports POST method.",
-        "usage": "Send POST /advice/existing with farm details + activity logs to get advisory.",
-        "note": "This endpoint is intended for your Android application, not direct browser access."
-    }
 
 
 # ---------------- NEW CROP POST API ----------------
@@ -131,4 +156,5 @@ def info_new():
         },
         "note": "This endpoint is meant for API/Android usage, not for direct browser access."
     }
+
 
