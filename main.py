@@ -77,7 +77,7 @@ def root():
 
 # ---------------- EXISTING CROP POST API ----------------
 @app.post("/advice/existing")
-async def existing_crop_advice(request: ExistingCropAdviceRequest):
+async def existing_crop_advice(request: ExistingCropRequest):
     try:
         logs = request.activityLogs or []
         stage_based_messages = []
@@ -156,5 +156,6 @@ def info_new():
         },
         "note": "This endpoint is meant for API/Android usage, not for direct browser access."
     }
+
 
 
