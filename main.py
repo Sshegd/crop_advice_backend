@@ -287,7 +287,7 @@ def new_crop_advice(req: NewCropRequest):
 
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
-       if lang != "en":
+        if lang != "en":
             for r in ranked:
                 crop_lower = r["cropName"].lower()
                 r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
@@ -307,6 +307,7 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
