@@ -76,48 +76,23 @@ def root():
 
 
 # ---------------- EXISTING CROP POST API ----------------
-@app.post("/advice/existing")
-async def existing_crop_advice(request: ExistingCropRequest):
+@app.post("/advice/existing", response_model=ExistingCropResponse)
+def existing_crop_advice(req: ExistingCropRequest):
     try:
-        logs = request.activityLogs or []
-        stage_based_messages = []
+        # Calls actual advisory engine that reads logs
+        advice = existing_crop_advisor.advise(
+            logs=req.activityLogs,
+            farm_details=req.farmDetails.dict()
+        )
 
-        # Quick mapping by subActivity if exists
-        for log in logs:
-            sub = log.get("subActivity", "")
-            if sub in existing_rules:
-                stage_based_messages.append(existing_rules[sub])
+        # If no crop name provided, fallback
+        if not advice.get("cropName"):
+            advice["cropName"] = req.farmDetails.cropName or "Crop"
 
-        # If nothing matched → provide fallback based on farm details
-        if not stage_based_messages:
-            crop = request.farmDetails.get("cropName", "your crop")
-            stage_based_messages.append([
-                f"Maintain irrigation based on soil moisture for {crop}.",
-                f"Apply balanced fertilizer based on recent soil test.",
-                "Monitor pest symptoms weekly.",
-                "Ensure proper drainage to avoid root rot."
-            ])
-
-        # Format response
-        return {
-            "cropName": request.farmDetails.get("cropName", "Crop"),
-            "cropManagement": stage_based_messages[0],
-            "nutrientManagement": stage_based_messages[0],
-            "waterManagement": stage_based_messages[0],
-            "protectionManagement": stage_based_messages[0],
-            "harvestMarketing": stage_based_messages[0]
-        }
+        return advice
 
     except Exception as e:
-        return {
-            "cropName": "Crop",
-            "cropManagement": ["General management recommendations available."],
-            "nutrientManagement": ["General nutrient recommendations available."],
-            "waterManagement": ["Ensure regular irrigation based on crop needs."],
-            "protectionManagement": ["Monitor pest symptoms & act accordingly."],
-            "harvestMarketing": ["Harvest at maturity & follow market standards."]
-        }
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------- NEW CROP POST API ----------------
@@ -156,6 +131,7 @@ def info_new():
         },
         "note": "This endpoint is meant for API/Android usage, not for direct browser access."
     }
+
 
 
 
