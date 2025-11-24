@@ -63,24 +63,36 @@ class NewCropResponse(BaseModel):
     recommendations: List[NewCropAdvice]
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
+# ====== MARKET PRICE (Karnataka Avg ₹/Quintal 2024–25) ======
 market_price_ktk = {
-    "areca nut": 54000,
-    "pepper": 62000,
-    "paddy": 3200,
-    "sugarcane": 3500,
-    "maize": 2200,
-    "banana": 1600,
-    "ginger": 8200,
-    "turmeric": 7200,
-    "soybean": 4600,
-    "cotton": 6200,
-    "groundnut": 6200,
-    "ragi": 3200,
-    "coffee": 23000,
-    "sunflower": 6100,
-    "chilli": 11000,
+    "areca nut": 58000,
+    "pepper": 64000,
+    "paddy": 3300,
+    "sugarcane": 3600,
+    "maize": 2300,
+    "banana": 1700,
+    "ginger": 8800,
+    "turmeric": 7600,
+    "soybean": 4700,
+    "cotton": 6400,
+    "groundnut": 6400,
+    "ragi": 3300,
+    "coffee": 23500,
+    "sunflower": 6200,
+    "chilli": 11200,
+    # Newly added
+    "tomato": 1300,
+    "potato": 1200,
+    "onion": 1500,
+    "pomegranate": 7500,
+    "mango": 3200,
+    "grapes": 3800,
+    "black gram": 7600,
+    "green gram": 7200,
+    "pigeon pea": 6900,
 }
-# ====== COST OF CULTIVATION PER ACRE (Approx based on Karnataka agriculture dept) ======
+
+# ====== COST OF CULTIVATION PER ACRE (₹) ======
 cultivation_cost = {
     "areca nut": 60000,
     "pepper": 50000,
@@ -97,8 +109,19 @@ cultivation_cost = {
     "coffee": 120000,
     "sunflower": 24000,
     "chilli": 92000,
+    # Newly added
+    "tomato": 45000,
+    "potato": 50000,
+    "onion": 38000,
+    "pomegranate": 90000,
+    "mango": 65000,
+    "grapes": 100000,
+    "black gram": 24000,
+    "green gram": 22000,
+    "pigeon pea": 26000,
 }
-# ====== YIELD PER ACRE (quintals) ======
+
+# ====== YIELD PER ACRE (Quintals) ======
 yield_per_acre = {
     "areca nut": 10,
     "pepper": 3,
@@ -115,8 +138,19 @@ yield_per_acre = {
     "coffee": 7,
     "sunflower": 6,
     "chilli": 30,
+    # Newly added
+    "tomato": 100,
+    "potato": 75,
+    "onion": 80,
+    "pomegranate": 30,
+    "mango": 55,
+    "grapes": 60,
+    "black gram": 5,
+    "green gram": 5,
+    "pigeon pea": 6,
 }
-# English → Kannada crop names
+
+# ====== English → Kannada Crop Names ======
 CROP_NAME_KN = {
     "areca nut": "ಅಡಿಕೆ",
     "banana": "ಬಾಳೆ",
@@ -124,7 +158,7 @@ CROP_NAME_KN = {
     "pepper": "ಮೆಣಸು",
     "turmeric": "ಅರಿಶಿನ",
     "ginger": "ಶುಂಠಿ",
-    "sugarcane": "ಕರಿಬೇವು",
+    "sugarcane": "ಕಬ್ಬು",
     "groundnut": "ಶೇಂಗಾ",
     "maize": "ಮೆಕ್ಕೆಜೋಳ",
     "ragi": "ರಾಗಿ",
@@ -133,7 +167,18 @@ CROP_NAME_KN = {
     "coffee": "ಕಾಫಿ",
     "sunflower": "ಸೂರ್ಯಕಾಂತಿ",
     "chilli": "ಮೆಣಸಿನಕಾಯಿ",
+    # Newly added
+    "tomato": "ಟೊಮ್ಯಾಟೊ",
+    "potato": "ಆಲೂಗಡ್ಡೆ",
+    "onion": "ಈರುಳ್ಳಿ",
+    "pomegranate": "ದಾಳಿಂಬೆ",
+    "mango": "ಮಾವು",
+    "grapes": "ದ್ರಾಕ್ಷಿ",
+    "black gram": "ಉದ್ದಿನಬೇಳೆ",
+    "green gram": "ಹೇಶರು",
+    "pigeon pea": "ತೊಗರಿ",
 }
+
 
 
 
@@ -307,6 +352,7 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
