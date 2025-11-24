@@ -113,7 +113,60 @@ def existing_crop_advice(req: ExistingCropRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
+market_price_ktk = {
+    "areca nut": 54000,
+    "pepper": 62000,
+    "paddy": 3200,
+    "sugarcane": 3500,
+    "maize": 2200,
+    "banana": 1600,
+    "ginger": 8200,
+    "turmeric": 7200,
+    "soybean": 4600,
+    "cotton": 6200,
+    "groundnut": 6200,
+    "ragi": 3200,
+    "coffee": 23000,
+    "sunflower": 6100,
+    "chilli": 11000,
+}
+# ====== COST OF CULTIVATION PER ACRE (Approx based on Karnataka agriculture dept) ======
+cultivation_cost = {
+    "areca nut": 60000,
+    "pepper": 50000,
+    "paddy": 38000,
+    "sugarcane": 78000,
+    "maize": 27000,
+    "banana": 95000,
+    "ginger": 105000,
+    "turmeric": 90000,
+    "soybean": 25000,
+    "cotton": 52000,
+    "groundnut": 30000,
+    "ragi": 22000,
+    "coffee": 120000,
+    "sunflower": 24000,
+    "chilli": 92000,
+}
+# ====== YIELD PER ACRE (quintals) ======
+yield_per_acre = {
+    "areca nut": 10,
+    "pepper": 3,
+    "paddy": 22,
+    "sugarcane": 40,
+    "maize": 18,
+    "banana": 35,
+    "ginger": 65,
+    "turmeric": 55,
+    "soybean": 7,
+    "cotton": 5,
+    "groundnut": 9,
+    "ragi": 10,
+    "coffee": 7,
+    "sunflower": 6,
+    "chilli": 30,
+}
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
@@ -147,6 +200,21 @@ def new_crop_advice(req: NewCropRequest):
             r["score"] = round(score, 3)
             ranked.append(r)
 
+            # ⭐ MARKET PRICE
+            price = market_price_ktk.get(crop)
+            r["avgMarketPricePerQuintal"] = price
+
+             # ⭐ PROFIT ESTIMATION
+            if price and crop in yield_per_acre and crop in cultivation_cost:
+                gross = price * yield_per_acre[crop]
+                net_profit = gross - cultivation_cost[crop]
+                r["estimatedNetProfitPerAcre"] = int(net_profit)
+            else:
+                r["estimatedNetProfitPerAcre"] = None
+
+            ranked.append(r)
+
+
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
         if req.language.lower() != "en":
@@ -164,3 +232,4 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
