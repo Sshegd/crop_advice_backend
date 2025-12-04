@@ -218,7 +218,13 @@ rainfall_range = {
     "turmeric": (900, 1800), "sugarcane": (1100, 2200),
 }
 
-
+def normalize_language(lang: str):
+    if not lang:
+        return "en"
+    lang = lang.strip().lower()
+    if lang in ["kn", "kan", "kannada", "kn-in", "ಕನ್ನಡ"]:
+        return "kn"
+    return "en"
 # ================ EXISTING CROP ADVICE =================
 # ================ EXISTING CROP ADVICE =================
 @app.post("/advice/existing", response_model=ExistingCropResponse)
@@ -226,8 +232,9 @@ def existing_crop_advice(req: ExistingCropRequest):
     try:
         # Generate advisory from logs using ML / rule engine
         result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
-        lang = req.language.lower()
+        lang = normalize_language(req.language)
         crop_eng = result["cropName"].lower()
+
 
         # ⭐ MARKET PRICE
         price = market_price_ktk.get(crop_eng)
@@ -244,28 +251,19 @@ def existing_crop_advice(req: ExistingCropRequest):
         else:
             result["estimatedNetProfitPerAcre"] = "Profit calculation unavailable"
 
-        # ---------------- LANGUAGE SWITCH ----------------
-        if lang != "en":
-            # Crop name translation by dictionary (no API call)
+        # Translation
+        if lang == "kn":
             result["cropName"] = CROP_NAME_KN.get(crop_eng, result["cropName"])
 
-            # Translate list texts safely
             for key in ["cropManagement", "nutrientManagement", "waterManagement",
                         "protectionManagement", "harvestMarketing"]:
-                translated_items = []
-                for sentence in result[key]:
-                    try:
-                        translated_items.append(translate_text(sentence, target_language=lang))
-                    except:
-                        translated_items.append(sentence)   # fallback if API fails
-                result[key] = translated_items
+                result[key] = [
+                    translate_text(item, target_language="kn") for item in result[key]
+                ]
 
-            # Translate price/profit UI text (non-blocking)
-            for meta in ["marketPrice", "estimatedNetProfitPerAcre"]:
-                try:
-                    result[meta] = translate_text(result[meta], target_language=lang)
-                except:
-                    pass  # fallback keeps English if translation API fails
+            # Translate meta-text also
+            result["marketPrice"] = translate_text(result["marketPrice"], target_language="kn")
+            result["estimatedNetProfitPerAcre"] = translate_text(result["estimatedNetProfitPerAcre"], target_language="kn")
 
         return result
 
@@ -278,9 +276,9 @@ def existing_crop_advice(req: ExistingCropRequest):
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
     try:
+        lang = normalize_language(req.language)
         base_recs = new_crop_advisor.recommend(req.dict(), top_k=6)
-        lang = req.language.lower()
-
+        
         district = req.district.lower()
         soil = req.soilType.lower()
         rain = req.avgRainfall
@@ -332,15 +330,13 @@ def new_crop_advice(req: NewCropRequest):
 
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
-        if lang != "en":
+         # Translation
+        if lang == "kn":
             for r in ranked:
-                crop_lower = r["cropName"].lower()
-                r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
-                for key in ("waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"):
-                    try:
-                        r[key] = translate_text(r[key], target_language=lang)
-                    except Exception:
-                        pass  # ❗ if translation fails → keep English text
+                crop = r["cropName"].lower()
+                r["cropName"] = CROP_NAME_KN.get(crop, r["cropName"])
+                for key in ["waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"]:
+                    r[key] = translate_text(r[key], target_language="kn")
 
         return {"recommendations": ranked}
 
@@ -352,6 +348,7 @@ def new_crop_advice(req: NewCropRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
