@@ -232,7 +232,7 @@ def existing_crop_advice(req: ExistingCropRequest):
     try:
         # Generate advisory from logs using ML / rule engine
         result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
-        lang = normalize_language(req.language)
+        lang = req.language.lower()
         crop_eng = result["cropName"].lower()
 
 
@@ -251,21 +251,31 @@ def existing_crop_advice(req: ExistingCropRequest):
         else:
             result["estimatedNetProfitPerAcre"] = "Profit calculation unavailable"
 
-        # Translation
-        if lang == "kn":
+        # LANGUAGE SWITCH
+        if lang != "en":
+            # Crop Name
             result["cropName"] = CROP_NAME_KN.get(crop_eng, result["cropName"])
 
+            # Advisory lists
             for key in ["cropManagement", "nutrientManagement", "waterManagement",
                         "protectionManagement", "harvestMarketing"]:
-                result[key] = [
-                    translate_text(item, target_language="kn") for item in result[key]
-                ]
+                translated = []
+                for sentence in result[key]:
+                    try:
+                        translated.append(translate_text(sentence, target_lang=lang))
+                    except:
+                        translated.append(sentence)
+                result[key] = translated
 
-            # Translate meta-text also
-            result["marketPrice"] = translate_text(result["marketPrice"], target_language="kn")
-            result["estimatedNetProfitPerAcre"] = translate_text(result["estimatedNetProfitPerAcre"], target_language="kn")
+            # Meta fields
+            for meta in ["marketPrice", "estimatedNetProfitPerAcre"]:
+                try:
+                    result[meta] = translate_text(result[meta], target_lang=lang)
+                except:
+                    pass
 
         return result
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -276,9 +286,10 @@ def existing_crop_advice(req: ExistingCropRequest):
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
     try:
-        lang = normalize_language(req.language)
-        base_recs = new_crop_advisor.recommend(req.dict(), top_k=6)
         
+        base_recs = new_crop_advisor.recommend(req.dict(), top_k=6)
+        lang = req.language.lower()
+
         district = req.district.lower()
         soil = req.soilType.lower()
         rain = req.avgRainfall
@@ -330,16 +341,21 @@ def new_crop_advice(req: NewCropRequest):
 
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
-         # Translation
-        if lang == "kn":
+         # LANGUAGE SWITCH
+        if lang != "en":
             for r in ranked:
-                crop = r["cropName"].lower()
-                r["cropName"] = CROP_NAME_KN.get(crop, r["cropName"])
-                for key in ["waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"]:
-                    r[key] = translate_text(r[key], target_language="kn")
+                crop_lower = r["cropName"].lower()
+                r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
 
+                for key in ("waterManagement", "nutrientManagement",
+                            "seedSelection", "otherAdvice"):
+                    try:
+                        r[key] = translate_text(r[key], target_lang=lang)
+                    except:
+                        pass
+
+        # FINAL SAFE RETURN
         return {"recommendations": ranked}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
