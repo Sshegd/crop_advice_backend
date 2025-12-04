@@ -34,6 +34,8 @@ class ExistingCropResponse(BaseModel):
     waterManagement: List[str]
     protectionManagement: List[str]
     harvestMarketing: List[str]
+    marketPrice: Optional[str] = None
+    estimatedNetProfitPerAcre: Optional[str] = None
 
 
 class NewCropRequest(BaseModel):
@@ -68,6 +70,7 @@ market_price_ktk = {
     "areca nut": 58000,
     "pepper": 64000,
     "paddy": 3300,
+    "rice":3300,
     "sugarcane": 3600,
     "maize": 2300,
     "banana": 1700,
@@ -97,6 +100,7 @@ cultivation_cost = {
     "areca nut": 60000,
     "pepper": 50000,
     "paddy": 38000,
+    "rice":38000,
     "sugarcane": 78000,
     "maize": 27000,
     "banana": 95000,
@@ -126,6 +130,7 @@ yield_per_acre = {
     "areca nut": 10,
     "pepper": 3,
     "paddy": 22,
+    "rice":22,
     "sugarcane": 40,
     "maize": 18,
     "banana": 35,
@@ -155,6 +160,7 @@ CROP_NAME_KN = {
     "areca nut": "ಅಡಿಕೆ",
     "banana": "ಬಾಳೆ",
     "paddy": "ಅಕ್ಕಿ",
+    "rice":"ಅಕ್ಕಿ",
     "pepper": "ಮೆಣಸು",
     "turmeric": "ಅರಿಶಿನ",
     "ginger": "ಶುಂಠಿ",
@@ -184,23 +190,23 @@ CROP_NAME_KN = {
 
 # ============ KNOWLEDGE BASE FOR KARNATAKA =================
 locality_crops = {
-    "uttara kannada": ["areca nut", "pepper", "paddy", "banana", "turmeric"],
-    "belagavi": ["sugarcane", "soybean", "maize", "paddy", "wheat"],
-    "shivamogga": ["areca nut", "pepper", "paddy", "banana", "ginger"],
-    "dharwad": ["soybean", "cotton", "maize", "groundnut", "sunflower"],
-    "haveri": ["cotton", "chilli", "maize", "paddy", "jowar"],
-    "ballari": ["pomegranate", "groundnut", "sunflower", "cotton"],
-    "chikkamagaluru": ["coffee", "pepper", "areca nut", "banana"],
-    "mysuru": ["cotton", "ragi", "paddy", "groundnut", "sugarcane"],
-    "mandya": ["sugarcane", "paddy", "mulberry", "banana"],
-    "tumakuru": ["ragi", "groundnut", "pigeon pea", "tomato"],
+    "uttara kannada": ["areca nut", "pepper", "paddy","rice", "banana", "turmeric"],
+    "belagavi": ["sugarcane", "soybean", "maize", "paddy","rice", "wheat"],
+    "shivamogga": ["areca nut", "pepper", "paddy","rice", "banana", "ginger"],
+    "dharwad": ["soybean", "cotton", "maize", "groundnut", "rice","sunflower"],
+    "haveri": ["cotton", "chilli", "maize", "paddy","rice", "jowar"],
+    "ballari": ["pomegranate", "groundnut", "sunflower""rice", "cotton"],
+    "chikkamagaluru": ["coffee", "pepper", "areca nut","rice", "banana"],
+    "mysuru": ["cotton", "ragi", "paddy", "groundnut","rice", "sugarcane"],
+    "mandya": ["sugarcane", "paddy", "mulberry","rice", "banana"],
+    "tumakuru": ["ragi", "groundnut", "pigeon pea", "rice","tomato"],
 }
 
 soil_crops = {
-    "red soil": ["areca nut", "pepper", "cotton", "groundnut", "ragi", "paddy"],
-    "black soil": ["cotton", "soybean", "turmeric", "paddy", "banana"],
+    "red soil": ["areca nut", "pepper", "cotton", "groundnut", "ragi", "paddy","rice"],
+    "black soil": ["cotton", "soybean", "turmeric", "paddy", "rice","banana"],
     "laterite": ["areca nut", "pepper", "coffee", "banana"],
-    "alluvial": ["paddy", "sugarcane", "banana", "vegetables"],
+    "alluvial": ["paddy","rice", "sugarcane", "banana", "vegetables"],
     "sandy": ["groundnut", "onion", "melon", "cucumber"],
 }
 
@@ -208,24 +214,18 @@ temp_range = {
     "areca nut": (18, 32), "pepper": (20, 30), "coffee": (15, 28),
     "banana": (15, 35), "cotton": (22, 32), "soybean": (20, 32),
     "maize": (20, 32), "paddy": (18, 38), "groundnut": (20, 36),
-    "turmeric": (20, 30), "sugarcane": (20, 35),
+    "turmeric": (20, 30), "sugarcane": (20, 35),"rice": (18, 38),
 }
 
 rainfall_range = {
     "areca nut": (2000, 3500), "pepper": (2000, 3000), "coffee": (1800, 3000),
     "paddy": (900, 2500), "cotton": (600, 1200), "soybean": (700, 1200),
     "maize": (500, 900), "groundnut": (500, 1200), "banana": (1100, 3000),
-    "turmeric": (900, 1800), "sugarcane": (1100, 2200),
+    "turmeric": (900, 1800), "sugarcane": (1100, 2200),"rice": (900, 2500),
 }
 
-def normalize_language(lang: str):
-    if not lang:
-        return "en"
-    lang = lang.strip().lower()
-    if lang in ["kn", "kan", "kannada", "kn-in", "ಕನ್ನಡ"]:
-        return "kn"
-    return "en"
-# ================ EXISTING CROP ADVICE =================
+
+
 # ================ EXISTING CROP ADVICE =================
 @app.post("/advice/existing", response_model=ExistingCropResponse)
 def existing_crop_advice(req: ExistingCropRequest):
@@ -251,27 +251,26 @@ def existing_crop_advice(req: ExistingCropRequest):
         else:
             result["estimatedNetProfitPerAcre"] = "Profit calculation unavailable"
 
-        # LANGUAGE SWITCH
+        # language switch
         if lang != "en":
-            # Crop Name
             result["cropName"] = CROP_NAME_KN.get(crop_eng, result["cropName"])
 
-            # Advisory lists
-            for key in ["cropManagement", "nutrientManagement", "waterManagement",
-                        "protectionManagement", "harvestMarketing"]:
+            for key in ["cropManagement", "nutrientManagement",
+                        "waterManagement", "protectionManagement",
+                        "harvestMarketing"]:
                 translated = []
-                for sentence in result[key]:
+                for s in result[key]:
                     try:
-                        translated.append(translate_text(sentence, target_lang=lang))
-                    except:
-                        translated.append(sentence)
+                        translated.append(translate_text(s, lang))
+                    except Exception:
+                        translated.append(s)
                 result[key] = translated
 
-            # Meta fields
+            # translate price/profit strings
             for meta in ["marketPrice", "estimatedNetProfitPerAcre"]:
                 try:
-                    result[meta] = translate_text(result[meta], target_lang=lang)
-                except:
+                    result[meta] = translate_text(result[meta], lang)
+                except Exception:
                     pass
 
         return result
@@ -287,11 +286,12 @@ def existing_crop_advice(req: ExistingCropRequest):
 def new_crop_advice(req: NewCropRequest):
     try:
         
-        base_recs = new_crop_advisor.recommend(req.dict(), top_k=6)
-        lang = req.language.lower()
+        payload = req.dict()
+        base_recs = new_crop_advisor.recommend(payload, top_k=6)
 
-        district = req.district.lower()
-        soil = req.soilType.lower()
+        lang = (req.language or "en").lower()
+        district = (req.district or "").lower()
+        soil = (req.soilType or "").lower()
         rain = req.avgRainfall
         temp = req.avgTemp
 
@@ -341,20 +341,18 @@ def new_crop_advice(req: NewCropRequest):
 
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
-         # LANGUAGE SWITCH
+        # language switch
         if lang != "en":
             for r in ranked:
                 crop_lower = r["cropName"].lower()
                 r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
-
                 for key in ("waterManagement", "nutrientManagement",
                             "seedSelection", "otherAdvice"):
                     try:
-                        r[key] = translate_text(r[key], target_lang=lang)
-                    except:
+                        r[key] = translate_text(r[key], lang)
+                    except Exception:
                         pass
 
-        # FINAL SAFE RETURN
         return {"recommendations": ranked}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
