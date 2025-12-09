@@ -1,212 +1,165 @@
 # pest_engine.py
-# ==========================================================
-# FULL Pest Detection Engine
-# Uses:
-#   - pest_db.py (20-crop ICAR pest dataset)
-#   - district_pest_history.py (31 district patterns)
-#   - google_translate.py
-# ==========================================================
-
-from datetime import datetime
-from typing import Dict, Optional, List
-from pest_db import PEST_DB
-from district_pest_history import PEST_HISTORY
+from typing import List, Dict, Optional
 from google_translate import translate_text
+from datetime import datetime
 
 
 class PestEngine:
+    def __init__(self, pest_db: Dict, pest_history: Dict):
+        """
+        Accepts:
+            pest_db      - Full ICAR Karnataka pest knowledge base
+            pest_history - 20-year district outbreak probabilities
+        """
+        self.pest_db = pest_db
+        self.pest_history = pest_history
 
-    # -------------------------------
-    # Convert int month → Month name
-    # -------------------------------
-    def get_month_name(self, month_int: Optional[int]):
+
+    # -----------------------------
+    # INTERNAL HELPERS
+    # -----------------------------
+    def _month_name(self, month_int: Optional[int]) -> str:
         if month_int is None:
             month_int = datetime.utcnow().month
         return datetime(2000, month_int, 1).strftime("%B")
 
-    # -------------------------------
-    # Evaluate a single pest rule set
-    # -------------------------------
-    def evaluate_rule(self,
-                      rule: Dict,
-                      crop_stage: Optional[str],
-                      temp: Optional[float],
-                      hum: Optional[float],
-                      rain: Optional[float],
-                      month_name: str,
-                      symptoms_text: Optional[str]):
 
+    def _risk_level(self, score: float) -> str:
+        if score >= 0.75:
+            return "HIGH"
+        if score >= 0.45:
+            return "MEDIUM"
+        return "LOW"
+
+
+    def _evaluate_rule(self, rule: Dict, stage, temp, hum, rain, month_name, symptoms_text):
+        """Returns: (score: float, reasons: list[str])"""
         reasons = []
-        total_cond = 0
         matched = 0
+        total = 0
 
-        # temp > X
+        # temperature
         if "temp_gt" in rule and temp is not None:
-            total_cond += 1
+            total += 1
             if temp > rule["temp_gt"]:
                 matched += 1
-                reasons.append(f"Temperature {temp}°C > {rule['temp_gt']}°C")
+                reasons.append(f"Temperature {temp} > {rule['temp_gt']}")
 
-        # temp range
         if "temp_range" in rule and temp is not None:
-            total_cond += 1
+            total += 1
             lo, hi = rule["temp_range"]
             if lo <= temp <= hi:
                 matched += 1
-                reasons.append(f"Temp {temp}°C within {lo}-{hi}°C")
+                reasons.append(f"Temperature {temp} in {lo}-{hi}")
 
-        # humidity >
+        # humidity
         if "humidity_gt" in rule and hum is not None:
-            total_cond += 1
+            total += 1
             if hum > rule["humidity_gt"]:
                 matched += 1
-                reasons.append(f"Humidity {hum}% > {rule['humidity_gt']}%")
+                reasons.append(f"Humidity {hum} > {rule['humidity_gt']}")
 
-        # humidity <
         if "humidity_lt" in rule and hum is not None:
-            total_cond += 1
+            total += 1
             if hum < rule["humidity_lt"]:
                 matched += 1
-                reasons.append(f"Humidity {hum}% < {rule['humidity_lt']}%")
+                reasons.append(f"Humidity {hum} < {rule['humidity_lt']}")
 
-        # rainfall >
+        # rainfall
         if "rainfall_gt" in rule and rain is not None:
-            total_cond += 1
+            total += 1
             if rain > rule["rainfall_gt"]:
                 matched += 1
-                reasons.append(f"Rainfall {rain}mm > {rule['rainfall_gt']}mm")
+                reasons.append(f"Rainfall {rain} > {rule['rainfall_gt']}")
 
-        # rainfall <
         if "rainfall_lt" in rule and rain is not None:
-            total_cond += 1
+            total += 1
             if rain < rule["rainfall_lt"]:
                 matched += 1
-                reasons.append(f"Rainfall {rain}mm < {rule['rainfall_lt']}mm")
+                reasons.append(f"Rainfall {rain} < {rule['rainfall_lt']}")
 
-        # crop stage
-        if "stage" in rule and crop_stage:
-            total_cond += 1
-            if crop_stage in rule["stage"]:
-                matched += 1
-                reasons.append(f"Crop stage risk: {crop_stage}")
-
-        # season match
+        # season
         if "season" in rule:
-            total_cond += 1
+            total += 1
             if month_name in rule["season"]:
                 matched += 1
-                reasons.append(f"Season risk in {month_name}")
+                reasons.append(f"Season: {month_name}")
 
-        # core rule score
-        score = (matched / total_cond) if total_cond > 0 else 0
+        # stage of crop
+        if "stage" in rule and stage:
+            total += 1
+            if stage in rule["stage"]:
+                matched += 1
+                reasons.append(f"Crop stage: {stage}")
 
-        # textual symptom clue (+15%)
+        # symptoms boost
+        score = matched / total if total > 0 else 0
+
         if symptoms_text:
-            possible_words = rule.get("symptoms", "").lower().split()
+            symptom_words = rule.get("symptoms", "").lower().split()
             text = symptoms_text.lower()
-            if any(w in text for w in possible_words):
-                score = min(1.0, score + 0.15)
-                reasons.append("Farmer symptom text matches pest profile")
+
+            if any(word in text for word in symptom_words):
+                score = min(1.0, score + 0.20)  # 20% confidence boost
+                reasons.append("Farmer symptom text suggests relevance")
 
         return score, reasons
 
-    # -------------------------------
-    # Apply District History Boost
-    # -------------------------------
-    def apply_district_history(self, district: str,
-                               crop: str,
-                               pest_name: str,
-                               month_name: str,
-                               score: float,
-                               reasons: List[str]):
 
-        d = district.lower()
-        crop = crop.lower()
+    # -----------------------------
+    # MAIN API ENGINE
+    # -----------------------------
+    def predict(
+        self,
+        cropName: str,
+        district: str = None,
+        taluk: str = None,
+        soilType: str = None,
+        stage: str = None,
+        temp: float = None,
+        humidity: float = None,
+        rainfall: float = None,
+        month_int: int = None,
+        lang: str = "en",
+    ):
+        crop = cropName.lower().strip()
+        month_name = self._month_name(month_int)
 
-        hist = PEST_HISTORY.get(d, {}).get(crop, {}).get(pest_name)
-        if not hist:
-            return score, reasons
-
-        # Season boost
-        if month_name in hist.get("season", []):
-            score += 0.20
-            reasons.append(f"Historically occurs in {d.title()} during {month_name}")
-
-        # Peak month boost
-        if month_name in hist.get("peak_months", []):
-            score += 0.35
-            reasons.append(f"Peak outbreak month in {d.title()}")
-
-        # Base district risk
-        rl = hist.get("risk_level")
-        if rl == "HIGH":
-            score += 0.20
-        elif rl == "MEDIUM":
-            score += 0.10
-
-        return min(1.0, score), reasons
-
-    # -------------------------------
-    # Convert numeric score → Risk
-    # -------------------------------
-    def risk_tag(self, score: float):
-        if score >= 0.75: return "HIGH"
-        if score >= 0.45: return "MEDIUM"
-        return "LOW"
-
-    # ==========================================================
-    # Main Pest Detection Function
-    # ==========================================================
-    def detect(self,
-               crop: str,
-               district: Optional[str],
-               taluk: Optional[str],
-               crop_stage: Optional[str],
-               temp: Optional[float],
-               humidity: Optional[float],
-               rainfall: Optional[float],
-               month: Optional[int],
-               symptoms_text: Optional[str],
-               lang: str):
-
-        crop = crop.lower().strip()
-        month_name = self.get_month_name(month)
-
-        if crop not in PEST_DB:
+        if crop not in self.pest_db:
             return []
 
-        results = []
+        alerts = []
 
-        for pest_name, rule in PEST_DB[crop].items():
+        # 1. Loop pests for this crop
+        for pest_name, rule in self.pest_db[crop].items():
+            score, reasons = self._evaluate_rule(
+                rule,
+                stage,
+                temp,
+                humidity,
+                rainfall,
+                month_name,
+                None   # symptoms text not needed here
+            )
 
-            # 1) rule-based evaluation
-            score, reasons = self.evaluate_rule(rule,
-                                                crop_stage,
-                                                temp,
-                                                humidity,
-                                                rainfall,
-                                                month_name,
-                                                symptoms_text)
+            # 2. Add district outbreak history boost
+            if district in self.pest_history and crop in self.pest_history[district]:
+                if pest_name in self.pest_history[district][crop]:
+                    historical_risk = self.pest_history[district][crop][pest_name]
+                    score = min(1.0, score + historical_risk * 0.25)
+                    reasons.append(f"Historical outbreak risk: {historical_risk}")
 
-            # 2) add district-history boost
-            if district:
-                score, reasons = self.apply_district_history(district,
-                                                             crop,
-                                                             pest_name,
-                                                             month_name,
-                                                             score,
-                                                             reasons)
+            if score < 0.45:  
+                continue
 
-            if score < 0.40:
-                continue  # ignore weak matches
+            # 3. Prepare alert
+            risk_level = self._risk_level(score)
 
-            risk = self.risk_tag(score)
-
-            # translation
             symptoms = rule.get("symptoms", "")
             preventive = rule.get("preventive", "")
             corrective = rule.get("corrective", "")
 
+            # 4. Translate if needed
             if lang != "en":
                 try:
                     pest_name = translate_text(pest_name, lang)
@@ -216,14 +169,15 @@ class PestEngine:
                 except:
                     pass
 
-            results.append({
+            alerts.append({
+                "cropName": cropName,
                 "pestName": pest_name,
-                "riskLevel": risk,
+                "riskLevel": risk_level,
                 "score": round(score, 2),
                 "reasons": reasons,
                 "symptoms": symptoms,
                 "preventive": preventive,
-                "corrective": corrective
+                "corrective": corrective,
             })
 
-        return results
+        return alerts
