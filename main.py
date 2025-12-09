@@ -23,7 +23,7 @@ class FarmDetails(BaseModel):
     district: Optional[str] = None
     taluk: Optional[str] = None
     soilType: Optional[str] = None
-
+    secondaryCrops: Optional[List[Dict]] = [] 
 
 class ExistingCropRequest(BaseModel):
     userId: str
@@ -42,6 +42,11 @@ class ExistingCropResponse(BaseModel):
     harvestMarketing: List[str]
     marketPrice: Optional[str] = None
     estimatedNetProfitPerAcre: Optional[str] = None
+from typing import List
+
+class ExistingCropFullResponse(BaseModel):
+    primaryCropAdvice: ExistingCropResponse
+    secondaryCropsAdvice: List[ExistingCropResponse]
 
 
 class NewCropRequest(BaseModel):
@@ -263,7 +268,7 @@ rainfall_range = {
 
 
 # ================ EXISTING CROP ADVICE =================
-@app.post("/advice/existing", response_model=ExistingCropResponse)
+@app.post("/advice/existing/full", response_model=ExistingCropResponse)
 def existing_crop_advice(req: ExistingCropRequest):
     try:
         # Generate advisory from logs using ML / rule engine
@@ -309,11 +314,74 @@ def existing_crop_advice(req: ExistingCropRequest):
                 except Exception:
                     pass
 
-        return result
+        primary_advice = ExistingCropResponse(**result)
+        secondary_advice_list = []
 
+        if req.farmDetails.secondaryCrops:
+            for sec in req.farmDetails.secondaryCrops:
+
+                sec_crop = sec.get("cropName", "").lower().strip()
+                if not sec_crop:
+                    continue
+
+                # Create a minimal farmDetails for ML model
+                sec_details = {
+                    "cropName": sec_crop,
+                    "district": req.farmDetails.district,
+                    "taluk": req.farmDetails.taluk,
+                    "soilType": req.farmDetails.soilType
+                }
+
+                # No logs → gives generic advisory
+                sec_raw = existing_crop_advisor.advise([], sec_details)
+
+                # ⭐ PRICE
+                sec_price = market_price_ktk.get(sec_crop)
+                if sec_price:
+                    sec_raw["marketPrice"] = f"₹ {sec_price} /quintal"
+
+                # ⭐ PROFIT
+                if sec_price and sec_crop in cultivation_cost and sec_crop in yield_per_acre:
+                    expected = yield_per_acre[sec_crop]
+                    sec_raw["estimatedNetProfitPerAcre"] = f"₹ {sec_price * expected - cultivation_cost[sec_crop]}"
+
+                # ⭐ TRANSLATION
+                if lang != "en":
+                    sec_raw["cropName"] = CROP_NAME_KN.get(sec_crop, sec_crop)
+
+                    for key in [
+                        "cropManagement",
+                        "nutrientManagement",
+                        "waterManagement",
+                        "protectionManagement",
+                        "harvestMarketing",
+                    ]:
+                        sec_raw[key] = [translate_text(x, lang) for x in sec_raw.get(key, [])]
+
+                    try:
+                        sec_raw["marketPrice"] = translate_text(sec_raw["marketPrice"], lang)
+                        sec_raw["estimatedNetProfitPerAcre"] = translate_text(
+                            sec_raw["estimatedNetProfitPerAcre"], lang
+                        )
+                    except:
+                        pass
+
+                secondary_advice_list.append(ExistingCropResponse(**sec_raw))
+
+        # ===========================================================
+        # 3️⃣ FINAL RESPONSE (primary + secondary)
+        # ===========================================================
+        return ExistingCropFullResponse(
+            primaryCropAdvice=primary_advice,
+            secondaryCropsAdvice=secondary_advice_list
+        )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+    
 
 
 
