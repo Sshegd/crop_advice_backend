@@ -395,26 +395,25 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
-
 @app.post("/pest/detect", response_model=PestResponse)
 def detect_pest(req: PestDetectionRequest):
     try:
-        alerts = pest_engine.detect(
-            crop=req.cropName,
+
+        alerts = pest_engine.predict(
+            cropName=req.cropName,
             district=req.district,
             taluk=req.taluk,
-            crop_stage=req.stage,
+            soilType=req.soilType,       # important
+            stage=req.stage,
             temp=req.avgTemp,
             humidity=req.humidity,
             rainfall=req.rainfall,
-            month=req.month,
-            symptoms_text=req.symptomsText,
+            month_int=req.month,
             lang=req.language,
         )
 
-        formatted = []
-        for a in alerts:
-            formatted.append(PestAlert(
+        formatted = [
+            PestAlert(
                 cropName=req.cropName,
                 pestName=a["pestName"],
                 riskLevel=a["riskLevel"],
@@ -423,7 +422,9 @@ def detect_pest(req: PestDetectionRequest):
                 symptoms=a["symptoms"],
                 preventive=a["preventive"],
                 corrective=a["corrective"]
-            ))
+            )
+            for a in alerts
+        ]
 
         return PestResponse(alerts=formatted)
 
