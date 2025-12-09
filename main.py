@@ -4,19 +4,20 @@ from typing import List, Dict, Optional
 from ml_advisor import NewCropAdvisor, ExistingCropAdvisor
 from google_translate import translate_text
 from datetime import datetime
-from pest_db import PEST_DB
+from pest_engine import PestEngine
+from pest_db_extended import PEST_DB
+from district_pest_history import PEST_HISTORY
+
+
 
 
 app = FastAPI(title="Crop Advisory Backend")
 
 new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
+pest_engine = PestEngine(PEST_DB, PEST_HISTORY)
 
-
-# ============================================================
-# MODELS
-# ============================================================
-
+# ============== MODELS =================
 class FarmDetails(BaseModel):
     cropName: Optional[str] = None
     district: Optional[str] = None
@@ -69,15 +70,14 @@ class NewCropAdvice(BaseModel):
 class NewCropResponse(BaseModel):
     recommendations: List[NewCropAdvice]
 
-
-# ============================================================
+# ==========================
 # PEST DETECTION MODELS
-# ============================================================
-
+# ==========================
 class PestDetectionRequest(BaseModel):
     cropName: str
     district: Optional[str] = None
     taluk: Optional[str] = None
+    soilType: Optional[str] = None
     stage: Optional[str] = None
     avgTemp: Optional[float] = None
     humidity: Optional[float] = None
@@ -85,7 +85,6 @@ class PestDetectionRequest(BaseModel):
     month: Optional[int] = None
     symptomsText: Optional[str] = None
     language: Optional[str] = "en"
-
 
 class PestAlert(BaseModel):
     cropName: str
@@ -97,20 +96,17 @@ class PestAlert(BaseModel):
     preventive: str
     corrective: str
 
-
 class PestResponse(BaseModel):
     alerts: List[PestAlert]
 
 
-# ============================================================
-# STATIC DATA (Prices, cultivation cost, yields…)
-# ============================================================
-
+# ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
+# ====== MARKET PRICE (Karnataka Avg ₹/Quintal 2024–25) ======
 market_price_ktk = {
     "areca nut": 58000,
     "pepper": 64000,
     "paddy": 3300,
-    "rice": 3300,
+    "rice":3300,
     "sugarcane": 3600,
     "maize": 2300,
     "banana": 1700,
@@ -123,6 +119,7 @@ market_price_ktk = {
     "coffee": 23500,
     "sunflower": 6200,
     "chilli": 11200,
+    # Newly added
     "tomato": 1300,
     "potato": 1200,
     "onion": 1500,
@@ -134,11 +131,12 @@ market_price_ktk = {
     "pigeon pea": 6900,
 }
 
+# ====== COST OF CULTIVATION PER ACRE (₹) ======
 cultivation_cost = {
     "areca nut": 60000,
     "pepper": 50000,
     "paddy": 38000,
-    "rice": 38000,
+    "rice":38000,
     "sugarcane": 78000,
     "maize": 27000,
     "banana": 95000,
@@ -151,6 +149,7 @@ cultivation_cost = {
     "coffee": 120000,
     "sunflower": 24000,
     "chilli": 92000,
+    # Newly added
     "tomato": 45000,
     "potato": 50000,
     "onion": 38000,
@@ -162,19 +161,42 @@ cultivation_cost = {
     "pigeon pea": 26000,
 }
 
+# ====== YIELD PER ACRE (Quintals) ======
 yield_per_acre = {
-    "areca nut": 10, "pepper": 3, "paddy": 22, "rice": 22, "sugarcane": 40,
-    "maize": 18, "banana": 35, "ginger": 65, "turmeric": 55, "soybean": 7,
-    "cotton": 5, "groundnut": 9, "ragi": 10, "coffee": 7, "sunflower": 6,
-    "chilli": 30, "tomato": 100, "potato": 75, "onion": 80, "pomegranate": 30,
-    "mango": 55, "grapes": 60, "black gram": 5, "green gram": 5, "pigeon pea": 6
+    "areca nut": 10,
+    "pepper": 3,
+    "paddy": 22,
+    "rice":22,
+    "sugarcane": 40,
+    "maize": 18,
+    "banana": 35,
+    "ginger": 65,
+    "turmeric": 55,
+    "soybean": 7,
+    "cotton": 5,
+    "groundnut": 9,
+    "ragi": 10,
+    "coffee": 7,
+    "sunflower": 6,
+    "chilli": 30,
+    # Newly added
+    "tomato": 100,
+    "potato": 75,
+    "onion": 80,
+    "pomegranate": 30,
+    "mango": 55,
+    "grapes": 60,
+    "black gram": 5,
+    "green gram": 5,
+    "pigeon pea": 6,
 }
 
+# ====== English → Kannada Crop Names ======
 CROP_NAME_KN = {
     "areca nut": "ಅಡಿಕೆ",
     "banana": "ಬಾಳೆ",
     "paddy": "ಅಕ್ಕಿ",
-    "rice": "ಅಕ್ಕಿ",
+    "rice":"ಅಕ್ಕಿ",
     "pepper": "ಮೆಣಸು",
     "turmeric": "ಅರಿಶಿನ",
     "ginger": "ಶುಂಠಿ",
@@ -187,6 +209,7 @@ CROP_NAME_KN = {
     "coffee": "ಕಾಫಿ",
     "sunflower": "ಸೂರ್ಯಕಾಂತಿ",
     "chilli": "ಮೆಣಸಿನಕಾಯಿ",
+    # Newly added
     "tomato": "ಟೊಮ್ಯಾಟೊ",
     "potato": "ಆಲೂಗಡ್ಡೆ",
     "onion": "ಈರುಳ್ಳಿ",
@@ -198,67 +221,122 @@ CROP_NAME_KN = {
     "pigeon pea": "ತೊಗರಿ",
 }
 
-# (locality_crops, soil_crops, temp_range, rainfall_range remain same)
 
 
-# ============================================================
-# EXISTING CROP ADVICE
-# ============================================================
 
+# ============ KNOWLEDGE BASE FOR KARNATAKA =================
+locality_crops = {
+    "uttara kannada": ["areca nut", "pepper", "paddy","rice", "banana", "turmeric"],
+    "belagavi": ["sugarcane", "soybean", "maize", "paddy","rice", "wheat"],
+    "shivamogga": ["areca nut", "pepper", "paddy","rice", "banana", "ginger"],
+    "dharwad": ["soybean", "cotton", "maize", "groundnut", "rice","sunflower"],
+    "haveri": ["cotton", "chilli", "maize", "paddy","rice", "jowar"],
+    "ballari": ["pomegranate", "groundnut", "sunflower""rice", "cotton"],
+    "chikkamagaluru": ["coffee", "pepper", "areca nut","rice", "banana"],
+    "mysuru": ["cotton", "ragi", "paddy", "groundnut","rice", "sugarcane"],
+    "mandya": ["sugarcane", "paddy", "mulberry","rice", "banana"],
+    "tumakuru": ["ragi", "groundnut", "pigeon pea", "rice","tomato"],
+}
+
+soil_crops = {
+    "red soil": ["areca nut", "pepper", "cotton", "groundnut", "ragi", "paddy","rice"],
+    "black soil": ["cotton", "soybean", "turmeric", "paddy", "rice","banana"],
+    "laterite": ["areca nut", "pepper", "coffee", "banana"],
+    "alluvial": ["paddy","rice", "sugarcane", "banana", "vegetables"],
+    "sandy": ["groundnut", "onion", "melon", "cucumber"],
+}
+
+temp_range = {
+    "areca nut": (18, 32), "pepper": (20, 30), "coffee": (15, 28),
+    "banana": (15, 35), "cotton": (22, 32), "soybean": (20, 32),
+    "maize": (20, 32), "paddy": (18, 38), "groundnut": (20, 36),
+    "turmeric": (20, 30), "sugarcane": (20, 35),"rice": (18, 38),
+}
+
+rainfall_range = {
+    "areca nut": (2000, 3500), "pepper": (2000, 3000), "coffee": (1800, 3000),
+    "paddy": (900, 2500), "cotton": (600, 1200), "soybean": (700, 1200),
+    "maize": (500, 900), "groundnut": (500, 1200), "banana": (1100, 3000),
+    "turmeric": (900, 1800), "sugarcane": (1100, 2200),"rice": (900, 2500),
+}
+
+
+
+# ================ EXISTING CROP ADVICE =================
 @app.post("/advice/existing", response_model=ExistingCropResponse)
 def existing_crop_advice(req: ExistingCropRequest):
     try:
+        # Generate advisory from logs using ML / rule engine
         result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
         lang = req.language.lower()
         crop_eng = result["cropName"].lower()
 
+
+        # ⭐ MARKET PRICE
         price = market_price_ktk.get(crop_eng)
         if price:
             result["marketPrice"] = f"₹ {price} /quintal"
+        else:
+            result["marketPrice"] = "Market data unavailable"
 
+        # ⭐ PROFIT ESTIMATION
         if price and crop_eng in cultivation_cost and crop_eng in yield_per_acre:
             expected_yield = yield_per_acre[crop_eng]
             net_profit = (price * expected_yield) - cultivation_cost[crop_eng]
-            result["estimatedNetProfitPerAcre"] = f"₹ {net_profit}"
+            result["estimatedNetProfitPerAcre"] = f"₹ {net_profit} /acre"
+        else:
+            result["estimatedNetProfitPerAcre"] = "Profit calculation unavailable"
 
+        # language switch
         if lang != "en":
             result["cropName"] = CROP_NAME_KN.get(crop_eng, result["cropName"])
-            for key in [
-                "cropManagement", "nutrientManagement", "waterManagement",
-                "protectionManagement", "harvestMarketing"
-            ]:
-                result[key] = [translate_text(s, lang) for s in result[key]]
 
+            for key in ["cropManagement", "nutrientManagement",
+                        "waterManagement", "protectionManagement",
+                        "harvestMarketing"]:
+                translated = []
+                for s in result[key]:
+                    try:
+                        translated.append(translate_text(s, lang))
+                    except Exception:
+                        translated.append(s)
+                result[key] = translated
+
+            # translate price/profit strings
             for meta in ["marketPrice", "estimatedNetProfitPerAcre"]:
-                result[meta] = translate_text(result[meta], lang)
+                try:
+                    result[meta] = translate_text(result[meta], lang)
+                except Exception:
+                    pass
 
         return result
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================
-# NEW CROP ADVICE
-# ============================================================
 
+# ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
     try:
+        
         payload = req.dict()
         base_recs = new_crop_advisor.recommend(payload, top_k=6)
 
-        lang = req.language.lower()
-        district = req.district.lower()
-        soil = req.soilType.lower()
-
-        rain, temp = req.avgRainfall, req.avgTemp
+        lang = (req.language or "en").lower()
+        district = (req.district or "").lower()
+        soil = (req.soilType or "").lower()
+        rain = req.avgRainfall
+        temp = req.avgTemp
 
         ranked = []
         for r in base_recs:
             crop = r["cropName"].lower()
             score = r["score"]
 
+            # Knowledge-base boosting
             if district in locality_crops and crop in locality_crops[district]:
                 score += 0.35
             if soil in soil_crops and crop in soil_crops[soil]:
@@ -272,174 +350,97 @@ def new_crop_advice(req: NewCropRequest):
                 if lo <= rain <= hi:
                     score += 0.25
 
-            price = market_price_ktk.get(crop)
-            r["avgMarketPricePerQuintal"] = price
+            r["score"] = round(score, 3)
+            
 
+            # ⭐ MARKET PRICE
+            price = market_price_ktk.get(crop)
+            r["avgMarketPricePerQuintal"] = price if price else None
+
+
+             # ⭐ PROFIT ESTIMATION
             if price and crop in yield_per_acre and crop in cultivation_cost:
                 expected_yield = yield_per_acre[crop]
-                r["expectedYieldPerAcreQuintal"] = expected_yield
-                r["estimatedNetProfitPerAcre"] = (price * expected_yield) - cultivation_cost[crop]
+                net_profit = (price * expected_yield) - cultivation_cost[crop]
 
-            r["score"] = round(score, 3)
+                r["expectedYieldPerAcreQuintal"] = expected_yield
+                r["estimatedNetProfitPerAcre"] = int(net_profit)
+            else:
+                r["expectedYieldPerAcreQuintal"] = None
+                r["estimatedNetProfitPerAcre"] = None
+
+            # ⭐ Price source tag
             r["priceSource"] = "Based on 2025 Karnataka Mandi Avg"
 
             ranked.append(r)
 
+
         ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)[:4]
 
+        # language switch
         if lang != "en":
             for r in ranked:
                 crop_lower = r["cropName"].lower()
                 r["cropName"] = CROP_NAME_KN.get(crop_lower, r["cropName"])
-                for key in ["waterManagement", "nutrientManagement", "seedSelection", "otherAdvice"]:
-                    r[key] = translate_text(r[key], lang)
+                for key in ("waterManagement", "nutrientManagement",
+                            "seedSelection", "otherAdvice"):
+                    try:
+                        r[key] = translate_text(r[key], lang)
+                    except Exception:
+                        pass
 
         return {"recommendations": ranked}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ============================================================
-# PEST DETECTION ENGINE
-# ============================================================
-
-def _month_name(month_int: Optional[int]) -> str:
-    if month_int is None:
-        month_int = datetime.utcnow().month
-    return datetime(2000, month_int, 1).strftime("%B")
-
-
-def _evaluate_single_rule(rule, stage, temp, hum, rain, month_name, symptoms_text):
-    reasons = []
-    total_cond = 0
-    matched = 0
-
-    if "temp_gt" in rule and temp:
-        total_cond += 1
-        if temp > rule["temp_gt"]:
-            matched += 1
-            reasons.append(f"Temperature {temp}°C > {rule['temp_gt']}°C")
-
-    if "temp_range" in rule and temp:
-        total_cond += 1
-        lo, hi = rule["temp_range"]
-        if lo <= temp <= hi:
-            matched += 1
-            reasons.append(f"Temperature {temp}°C within {lo}-{hi}°C")
-
-    if "humidity_gt" in rule and hum:
-        total_cond += 1
-        if hum > rule["humidity_gt"]:
-            matched += 1
-            reasons.append(f"Humidity > {rule['humidity_gt']}%")
-
-    if "humidity_lt" in rule and hum:
-        total_cond += 1
-        if hum < rule["humidity_lt"]:
-            matched += 1
-            reasons.append(f"Humidity < {rule['humidity_lt']}%")
-
-    if "rainfall_gt" in rule and rain:
-        total_cond += 1
-        if rain > rule["rainfall_gt"]:
-            matched += 1
-            reasons.append(f"Rainfall > {rule['rainfall_gt']}mm")
-
-    if "rainfall_lt" in rule and rain:
-        total_cond += 1
-        if rain < rule["rainfall_lt"]:
-            matched += 1
-            reasons.append(f"Rainfall < {rule['rainfall_lt']}mm")
-
-    if "season" in rule:
-        total_cond += 1
-        if month_name in rule["season"]:
-            matched += 1
-            reasons.append(f"Season: {month_name}")
-
-    if "stage" in rule and stage:
-        total_cond += 1
-        if stage in rule["stage"]:
-            matched += 1
-            reasons.append(f"Stage risk: {stage}")
-
-    score = matched / total_cond if total_cond > 0 else 0
-
-    if symptoms_text:
-        if any(w in symptoms_text.lower() for w in rule.get("symptoms", "").lower().split()):
-            score = min(1.0, score + 0.15)
-            reasons.append("Farmer symptoms match observed patterns")
-
-    return score, reasons
-
-
-def _risk_level(score):
-    if score >= 0.75:
-        return "HIGH"
-    if score >= 0.45:
-        return "MEDIUM"
-    return "LOW"
+# ================ PEST DETECTION LOGIC =================
 
 
 @app.post("/pest/detect", response_model=PestResponse)
 def detect_pest(req: PestDetectionRequest):
     try:
-        crop = req.cropName.lower()
-        if crop not in PEST_DB:
-            raise HTTPException(404, f"No pest data for {req.cropName}")
+        alerts = pest_engine.detect(
+            crop=req.cropName,
+            district=req.district,
+            taluk=req.taluk,
+            crop_stage=req.stage,
+            temp=req.avgTemp,
+            humidity=req.humidity,
+            rainfall=req.rainfall,
+            month=req.month,
+            symptoms_text=req.symptomsText,
+            lang=req.language,
+        )
 
-        month_name = _month_name(req.month)
+        formatted = []
+        for a in alerts:
+            formatted.append(PestAlert(
+                cropName=req.cropName,
+                pestName=a["pestName"],
+                riskLevel=a["riskLevel"],
+                score=a["score"],
+                reasons=a["reasons"],
+                symptoms=a["symptoms"],
+                preventive=a["preventive"],
+                corrective=a["corrective"]
+            ))
 
-        alerts = []
-
-        for pest_name, rule in PEST_DB[crop].items():
-            score, reasons = _evaluate_single_rule(
-                rule,
-                req.stage,
-                req.avgTemp,
-                req.humidity,
-                req.rainfall,
-                month_name,
-                req.symptomsText,
-            )
-
-            if score < 0.45:
-                continue
-
-            symptoms = rule.get("symptoms", "")
-            preventive = rule.get("preventive", "")
-            corrective = rule.get("corrective", "")
-
-            if req.language != "en":
-                try:
-                    pest_name = translate_text(pest_name, req.language)
-                    symptoms = translate_text(symptoms, req.language)
-                    preventive = translate_text(preventive, req.language)
-                    corrective = translate_text(corrective, req.language)
-                except:
-                    pass
-
-            alerts.append(
-                PestAlert(
-                    cropName=req.cropName if req.language == "en" else CROP_NAME_KN.get(crop, req.cropName),
-                    pestName=pest_name,
-                    riskLevel=_risk_level(score),
-                    score=round(score, 2),
-                    reasons=reasons,
-                    symptoms=symptoms,
-                    preventive=preventive,
-                    corrective=corrective,
-                )
-            )
-
-        return PestResponse(alerts=alerts)
+        return PestResponse(alerts=formatted)
 
     except Exception as e:
         raise HTTPException(500, str(e))
 
-
-
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
+ 
+
+
+
+
+
+
+
+
+
+
