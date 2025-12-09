@@ -7,6 +7,7 @@ from datetime import datetime
 from pest_engine import PestEngine
 from pest_db_extended import PEST_DB
 from district_pest_history import PEST_HISTORY
+from typing import List
 
 
 
@@ -23,7 +24,7 @@ class FarmDetails(BaseModel):
     district: Optional[str] = None
     taluk: Optional[str] = None
     soilType: Optional[str] = None
-    secondaryCrops: Optional[List[Dict]] = [] 
+    secondaryCrops: Optional[List[Dict]] = None
 
 class ExistingCropRequest(BaseModel):
     userId: str
@@ -42,7 +43,7 @@ class ExistingCropResponse(BaseModel):
     harvestMarketing: List[str]
     marketPrice: Optional[str] = None
     estimatedNetProfitPerAcre: Optional[str] = None
-from typing import List
+
 
 class ExistingCropFullResponse(BaseModel):
     primaryCropAdvice: ExistingCropResponse
@@ -323,7 +324,7 @@ def existing_crop_advice(req: ExistingCropRequest):
         # ============================
         # 2) SECONDARY CROPS ADVICE
         # ============================
-        secondary_list = []
+        secondary_list :List[ExistingCropResponse]=[]
 
         if req.farmDetails.secondaryCrops:
             for sec in req.farmDetails.secondaryCrops:
