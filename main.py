@@ -26,6 +26,11 @@ class FarmDetails(BaseModel):
     soilType: Optional[str] = None
     secondaryCrops: Optional[List[Dict]] = None
 
+class SecondaryCropModel(BaseModel):
+    cropKey: str
+    cropName: str
+    activityLogs: List[Dict] = []
+
 class ExistingCropRequest(BaseModel):
     userId: str
     primaryCropKey: str
@@ -34,10 +39,7 @@ class ExistingCropRequest(BaseModel):
     secondaryCrops: List[SecondaryCropModel] = [] 
     language: Optional[str] = "en"
 
-class SecondaryCropModel(BaseModel):
-    cropKey: str
-    cropName: str
-    activityLogs: List[Dict] = []
+
 
 
 
@@ -518,6 +520,7 @@ def detect_pest(req: PestDetectionRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
