@@ -31,7 +31,14 @@ class ExistingCropRequest(BaseModel):
     primaryCropKey: str
     farmDetails: FarmDetails
     activityLogs: List[Dict]
+    secondaryCrops: List[SecondaryCropModel] = [] 
     language: Optional[str] = "en"
+
+class SecondaryCropModel(BaseModel):
+    cropKey: str
+    cropName: str
+    activityLogs: List[Dict] = []
+
 
 
 class ExistingCropResponse(BaseModel):
@@ -327,51 +334,55 @@ def existing_crop_advice(req: ExistingCropRequest):
         secondary_list = []
 
         for sec in req.secondaryCrops:
+            try:
+                sec_name = sec.cropName.lower().strip()
+                sec_key = sec.cropKey
+                sec_logs = sec.activityLogs or []
 
-            sec_name = sec.cropName.lower().strip()
-            sec_key = sec.cropKey
+                sec_details = {
+                    "cropName": sec_name,
+                    "district": req.farmDetails.district,
+                    "taluk": req.farmDetails.taluk,
+                    "soilType": req.farmDetails.soilType
+                }
 
-            # IF NO LOGS → STILL GIVE GENERAL ADVICE
-            sec_logs = sec.activityLogs or []
+                sec_raw = existing_crop_advisor.advise(sec_logs, sec_details)
 
-            sec_details = {
-                "cropName": sec_name,
-                "district": req.farmDetails.district,
-                "taluk": req.farmDetails.taluk,
-                "soilType": req.farmDetails.soilType
-            }
+                 # Market price + profit
+                sec_price = market_price_ktk.get(sec_name)
+                if sec_price:
+                    sec_raw["marketPrice"] = f"₹ {sec_price} /quintal"
 
-            # 🔥 FIXED: ML ADVICE FOR THIS SECONDARY CROP USING ACTUAL LOGS
-            sec_raw = existing_crop_advisor.advise(sec_logs, sec_details)
+                if sec_price and sec_name in cultivation_cost and sec_name in yield_per_acre:
+                    exp_yield = yield_per_acre[sec_name]
+                    profit = (sec_price * exp_yield) - cultivation_cost[sec_name]
+                    sec_raw["estimatedNetProfitPerAcre"] = f"₹ {profit} /acre"
 
-            # Add price + profit
-            sec_price = market_price_ktk.get(sec_name)
-            if sec_price:
-                sec_raw["marketPrice"] = f"₹ {sec_price} /quintal"
+                # Translation safe mode
+                if lang != "en":
+                    sec_raw["cropName"] = CROP_NAME_KN.get(sec_name, sec_name)
 
-            if sec_price and sec_name in cultivation_cost and sec_name in yield_per_acre:
-                expected_yield = yield_per_acre[sec_name]
-                profit = (sec_price * expected_yield) - cultivation_cost[sec_name]
-                sec_raw["estimatedNetProfitPerAcre"] = f"₹ {profit} /acre"
+                    for key in ["cropManagement", "nutrientManagement",
+                        "waterManagement", "protectionManagement",
+                        "harvestMarketing"]:
+                        try:
+                            sec_raw[key] = [translate_text(x, lang) for x in sec_raw.get(key, [])]
+                        except:
+                            pass
 
-            # Translate secondary advisory
-            if lang != "en":
-                sec_raw["cropName"] = CROP_NAME_KN.get(sec_name, sec_name)
+                    try:
+                        sec_raw["marketPrice"] = translate_text(sec_raw["marketPrice"], lang)
+                        sec_raw["estimatedNetProfitPerAcre"] = translate_text(
+                            sec_raw["estimatedNetProfitPerAcre"], lang
+                        )
+                    except:
+                        pass
 
-                for key in ["cropManagement", "nutrientManagement",
-                            "waterManagement", "protectionManagement",
-                            "harvestMarketing"]:
-                    sec_raw[key] = [translate_text(x, lang) for x in sec_raw.get(key, [])]
+                secondary_list.append(ExistingCropResponse(**sec_raw))
 
-                try:
-                    sec_raw["marketPrice"] = translate_text(sec_raw["marketPrice"], lang)
-                    sec_raw["estimatedNetProfitPerAcre"] = translate_text(
-                        sec_raw["estimatedNetProfitPerAcre"], lang
-                    )
-                except:
-                    pass
-
-            secondary_list.append(ExistingCropResponse(**sec_raw))
+            except Exception as e:
+                print("Secondary crop error:", e)
+                continue
 
         # ============================================================
         # 3️⃣ FINAL RETURN
