@@ -275,53 +275,55 @@ rainfall_range = {
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
     try:
-        lang = req.language.lower()
+        lang = (req.language or "en").lower()
 
-        # ============================================================
-        # 1️⃣ PRIMARY CROP ADVICE (uses req.activityLogs)
-        # ============================================================
-        primary_raw = existing_crop_advisor.advise(
+        # ============================
+        # 1) PRIMARY CROP ADVICE
+        # ============================
+        base_result = existing_crop_advisor.advise(
             req.activityLogs,
             req.farmDetails.dict()
         )
 
-        crop_eng = primary_raw["cropName"].lower()
+        crop_eng = base_result["cropName"].lower().strip()
 
-        # Add market price + profit
+        # ⭐ MARKET PRICE
         price = market_price_ktk.get(crop_eng)
         if price:
-            primary_raw["marketPrice"] = f"₹ {price} /quintal"
+            base_result["marketPrice"] = f"₹ {price} /quintal"
         else:
-            primary_raw["marketPrice"] = "Market data unavailable"
+            base_result["marketPrice"] = "Market data unavailable"
 
+        # ⭐ PROFIT ESTIMATION
         if price and crop_eng in cultivation_cost and crop_eng in yield_per_acre:
             expected_yield = yield_per_acre[crop_eng]
-            profit = (price * expected_yield) - cultivation_cost[crop_eng]
-            primary_raw["estimatedNetProfitPerAcre"] = f"₹ {profit} /acre"
+            net = (price * expected_yield) - cultivation_cost[crop_eng]
+            base_result["estimatedNetProfitPerAcre"] = f"₹ {net} /acre"
         else:
-            primary_raw["estimatedNetProfitPerAcre"] = "Profit unavailable"
+            base_result["estimatedNetProfitPerAcre"] = "Profit data unavailable"
 
-        # Translate primary advisory
+        # ⭐ TRANSLATION
         if lang != "en":
-            primary_raw["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
+            base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
+
             for key in ["cropManagement", "nutrientManagement",
                         "waterManagement", "protectionManagement",
                         "harvestMarketing"]:
-                primary_raw[key] = [translate_text(x, lang) for x in primary_raw[key]]
+                base_result[key] = [
+                    translate_text(item, lang) for item in base_result[key]
+                ]
 
-            try:
-                primary_raw["marketPrice"] = translate_text(primary_raw["marketPrice"], lang)
-                primary_raw["estimatedNetProfitPerAcre"] = translate_text(
-                    primary_raw["estimatedNetProfitPerAcre"], lang
-                )
-            except:
-                pass
+            for m in ["marketPrice", "estimatedNetProfitPerAcre"]:
+                try:
+                    base_result[m] = translate_text(base_result[m], lang)
+                except:
+                    pass
 
-        primary_advice = ExistingCropResponse(**primary_raw)
+        primary_advice = ExistingCropResponse(**base_result)
 
-        # ============================================================
-        # 2️⃣ SECONDARY CROPS — FIXED
-        # ============================================================
+        # ============================
+        # 2) SECONDARY CROPS ADVICE
+        # ============================
         secondary_list = []
 
         for sec in req.secondaryCrops:
@@ -381,7 +383,6 @@ def existing_crop_advice(req: ExistingCropRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
     
