@@ -31,18 +31,16 @@ class SecondaryCropModel(BaseModel):
     cropName: str
     activityLogs: List[Dict] = []
 
-class ExistingCropRequest(BaseModel):
-    userId: str
-    primaryCropKey: str
+class SingleExistingRequest(BaseModel):
+    cropKey: str
+    cropName: Optional[str] = None
     farmDetails: FarmDetails
     activityLogs: List[Dict]
-    secondaryCrops: List[SecondaryCropModel] = [] 
     language: Optional[str] = "en"
 
-class SecondaryCropModel(BaseModel):
-    cropKey: str
-    cropName: str
-    activityLogs: List[Dict] = []
+
+
+
 
 
 
@@ -282,62 +280,50 @@ rainfall_range = {
 
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
-# EXISTING CROP ADVICE → PRIMARY + SECONDARY CROPS
-# ======================================================
-# ---------- EXISTING CROP ADVICE (SINGLE CROP) ----------
-@app.post("/advice/existing", response_model=ExistingCropResponse)
-def existing_single_crop_advice(req: ExistingCropRequest):
+
+@app.post("/advice/existing/single", response_model=ExistingCropResponse)
+def existing_crop_single(req: SingleExistingRequest):
     try:
         lang = (req.language or "en").lower()
+        crop_eng = (req.cropName or "").lower().strip()
 
-        base_result = existing_crop_advisor.advise(
-            req.activityLogs,
-            req.farmDetails.dict()
-        )
+        # ML advisory
+        result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
 
-        crop_eng = base_result["cropName"].lower().strip()
-
-        # ⭐ Price
+        # 🟣 MARKET PRICE
         price = market_price_ktk.get(crop_eng)
         if price:
-            base_result["marketPrice"] = f"₹ {price} /quintal"
-        else:
-            base_result["marketPrice"] = "Market data unavailable"
+            result["marketPrice"] = f"₹ {price} /quintal"
 
-        # ⭐ Profit
+        # 🟣 PROFIT
         if price and crop_eng in cultivation_cost and crop_eng in yield_per_acre:
-            expected = yield_per_acre[crop_eng]
-            net = (price * expected) - cultivation_cost[crop_eng]
-            base_result["estimatedNetProfitPerAcre"] = f"₹ {net} /acre"
-        else:
-            base_result["estimatedNetProfitPerAcre"] = "Profit data unavailable"
+            yield_q = yield_per_acre[crop_eng]
+            profit = (price * yield_q) - cultivation_cost[crop_eng]
+            result["estimatedNetProfitPerAcre"] = f"₹ {profit} /acre"
 
-        # ⭐ Translation
+        # 🟣 LANGUAGE TRANSLATION
         if lang != "en":
-            base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
+            result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
 
-            for key in [
-                "cropManagement",
-                "nutrientManagement",
-                "waterManagement",
-                "protectionManagement",
-                "harvestMarketing",
-            ]:
-                base_result[key] = [
-                    translate_text(item, lang) for item in base_result.get(key, [])
-                ]
-
-            for m in ["marketPrice", "estimatedNetProfitPerAcre"]:
+            for key in ["cropManagement", "nutrientManagement",
+                        "waterManagement", "protectionManagement",
+                        "harvestMarketing"]:
                 try:
-                    base_result[m] = translate_text(base_result[m], lang)
-                except Exception:
+                    result[key] = [translate_text(x, lang) for x in result[key]]
+                except:
                     pass
 
-        return ExistingCropResponse(**base_result)
+            # Translate meta fields
+            for key in ["marketPrice", "estimatedNetProfitPerAcre"]:
+                try:
+                    result[key] = translate_text(result[key], lang)
+                except:
+                    pass
+
+        return ExistingCropResponse(**result)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
     
 
@@ -461,6 +447,7 @@ def detect_pest(req: PestDetectionRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
