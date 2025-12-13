@@ -86,17 +86,22 @@ class NewCropResponse(BaseModel):
     recommendations: List[NewCropAdvice]
 
 
-class CropLog(BaseModel):
+class CropLogBlock(BaseModel):
     cropName: str
     stage: Optional[str] = None
+    activityLogs: Optional[List[dict]] = []
     
-class PestRequest(BaseModel):
-    crops: List[CropLog]
-    district: str
-    soilType: str
-    avgTemp: float
-    humidity: float
-    month: int
+class PestRiskRequest(BaseModel):
+    crops: List[CropLogBlock]
+    district: Optional[str] = None
+    taluk: Optional[str] = None
+    soilType: Optional[str] = None
+    avgTemp: Optional[float] = None
+    humidity: Optional[float] = None
+    rainfall: Optional[float] = None
+    month: Optional[int] = None
+    language: Optional[str] = "en"
+
 
 class PestAlert(BaseModel):
     cropName: str
@@ -108,8 +113,13 @@ class PestAlert(BaseModel):
     preventive: str
     corrective: str
 
-class PestResponse(BaseModel):
+class CropPestRisk(BaseModel):
+    cropName: str
     alerts: List[PestAlert]
+
+class PestRiskResponse(BaseModel):
+    status: str
+    pestRisks: List[CropPestRisk]
 
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
@@ -464,19 +474,23 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
-@app.post("/pest/risk")
-def pest_risk(req: PestRequest):
+@app.post("/pest/risk", response_model=PestRiskResponse)
+def pest_risk(req: PestRiskRequest):
+
     results = []
 
     for crop in req.crops:
         alerts = engine.predict(
             cropName=crop.cropName,
             district=req.district,
+            taluk=req.taluk,
             soilType=req.soilType,
             stage=crop.stage,
             temp=req.avgTemp,
             humidity=req.humidity,
-            month_int=req.month
+            rainfall=req.rainfall,
+            month_int=req.month,
+            lang=req.language
         )
 
         results.append({
@@ -488,10 +502,13 @@ def pest_risk(req: PestRequest):
         "status": "success",
         "pestRisks": results
     }
+
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
+
  
+
 
 
 
