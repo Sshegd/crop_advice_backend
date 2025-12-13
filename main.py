@@ -376,37 +376,7 @@ rainfall_range = {
 }
 
 
-def normalize_existing_crop(result: dict, crop_name: str) -> dict:
-    """
-    Ensures response ALWAYS matches ExistingCropResponse schema
-    """
 
-    return {
-        "cropName": result.get("cropName") or crop_name,
-
-        "cropManagement": result.get("cropManagement") or [
-            "Follow standard crop management practices suitable for this stage."
-        ],
-
-        "nutrientManagement": result.get("nutrientManagement") or [
-            "Apply nutrients based on soil condition and crop requirement."
-        ],
-
-        "waterManagement": result.get("waterManagement") or [
-            "Maintain proper soil moisture and avoid water stress."
-        ],
-
-        "protectionManagement": result.get("protectionManagement") or [
-            "Monitor pests and diseases and take preventive measures early."
-        ],
-
-        "harvestMarketing": result.get("harvestMarketing") or [
-            "Harvest at proper maturity and follow local market trends."
-        ],
-
-        "marketPrice": result.get("marketPrice"),
-        "estimatedNetProfitPerAcre": result.get("estimatedNetProfitPerAcre")
-    }
 
 score = 0.0
 
@@ -416,8 +386,10 @@ if stage in pest["stage"]:
 if district in PEST_HISTORY.get(crop, []):
     score += 0.3
 
-if pest temp & humidity match:
-    score += 0.3
+if temp >= rule["temp_range"][0] and temp <= rule["temp_range"][1] \
+        and humidity >= rule.get("humidity_gt", 0):
+    score += 0.2
+
 
 riskLevel = (
     "High" if score >= 0.7
@@ -578,6 +550,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
