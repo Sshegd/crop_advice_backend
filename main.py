@@ -32,11 +32,16 @@ class SecondaryCropModel(BaseModel):
     activityLogs: List[Dict] = []
 
 class ExistingCropRequest(BaseModel):
-    cropKey: str
-    cropName: Optional[str] = None
+    userId: Optional[str] = None
+    primaryCropKey: Optional[str] = None
+
     farmDetails: FarmDetails
-    activityLogs: List[Dict]
+    activityLogs: List[Dict] = []
+
+    secondaryCrops: Optional[List[SecondaryCropModel]] = []
+
     language: Optional[str] = "en"
+
 
 class CropLogBlock(BaseModel):
     cropKey: str
@@ -342,34 +347,56 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
                 "cropName": req.farmDetails.cropName
             }
         )
+        # 🔥 FALLBACK IF EMPTY
+        if not primary_result.get("cropManagement"):
+            primary_result["cropManagement"] = [
+                "Follow recommended practices for the current growth stage.",
+                "Regularly monitor crop health and field conditions."
+            ]
+            primary_result.setdefault("nutrientManagement", [])
+            primary_result.setdefault("waterManagement", [])
+            primary_result.setdefault("protectionManagement", [])
+            primary_result.setdefault("harvestMarketing", [])
 
         primary_result = enrich_existing_crop(primary_result, lang)
 
+    
+
         # ================= SECONDARY CROPS =================
         secondary_results = []
+        for sc in req.secondaryCrops or []:
 
-        for sc in req.secondaryCrops:
-            if not sc.activityLogs:
-                continue
+            sc_logs = sc.activityLogs or []
 
             sc_result = existing_crop_advisor.advise(
-                sc.activityLogs,
+                sc_logs,
                 {"cropName": sc.cropName}
             )
+            # 🔥 FALLBACK
+            if not sc_result.get("cropManagement"):
+                sc_result["cropManagement"] = [
+                    "Maintain crop hygiene and follow standard agronomic practices."
+                ]
+                sc_result.setdefault("nutrientManagement", [])
+                sc_result.setdefault("waterManagement", [])
+                sc_result.setdefault("protectionManagement", [])
+                sc_result.setdefault("harvestMarketing", [])
 
             sc_result = enrich_existing_crop(sc_result, lang)
 
             secondary_results.append(
                 ExistingCropResponse(**sc_result)
             )
-
         return ExistingCropFullResponse(
             primaryCropAdvice=ExistingCropResponse(**primary_result),
             secondaryCropsAdvice=secondary_results
         )
-
-    except Exception as e:
+     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+        
+
+       
 
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
@@ -486,6 +513,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
