@@ -340,13 +340,16 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
         lang = (req.language or "en").lower()
 
         # ================= PRIMARY CROP =================
+        primary_logs = req.activityLogs or []
+
         primary_result = existing_crop_advisor.advise(
-            req.activityLogs,
+            primary_logs,
             {
                 **req.farmDetails.dict(),
                 "cropName": req.farmDetails.cropName
             }
         )
+
         # 🔥 FALLBACK IF EMPTY
         if not primary_result.get("cropManagement"):
             primary_result["cropManagement"] = [
@@ -360,18 +363,17 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
 
         primary_result = enrich_existing_crop(primary_result, lang)
 
-    
-
         # ================= SECONDARY CROPS =================
         secondary_results = []
-        for sc in req.secondaryCrops or []:
 
+        for sc in req.secondaryCrops or []:
             sc_logs = sc.activityLogs or []
 
             sc_result = existing_crop_advisor.advise(
                 sc_logs,
                 {"cropName": sc.cropName}
             )
+
             # 🔥 FALLBACK
             if not sc_result.get("cropManagement"):
                 sc_result["cropManagement"] = [
@@ -387,13 +389,14 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
             secondary_results.append(
                 ExistingCropResponse(**sc_result)
             )
+
         return ExistingCropFullResponse(
             primaryCropAdvice=ExistingCropResponse(**primary_result),
             secondaryCropsAdvice=secondary_results
         )
-     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
         
 
        
@@ -513,6 +516,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
