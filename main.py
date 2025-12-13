@@ -281,52 +281,52 @@ rainfall_range = {
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
 
-@app.post("/advice/existing/single", response_model=ExistingCropResponse)
-def existing_crop_single(req: SingleExistingRequest):
-    try:
-        lang = (req.language or "en").lower()
-        crop_eng = (req.cropName or "").lower().strip()
+@app.post("/advice/existing/full", response_model=ExistingCropResponse)
+def existing_crop_single(req: ExistingRequest):
+    lang = (req.language or "en").lower()
 
-        # ML advisory
-        result = existing_crop_advisor.advise(req.activityLogs, req.farmDetails.dict())
+        # ================= PRIMARY CROP =================
+        primary_result = existing_crop_advisor.advise(
+            req.activityLogs,
+            {
+                **req.farmDetails.dict(),
+                "cropName": req.farmDetails.cropName
+            }
+        )
 
-        # 🟣 MARKET PRICE
-        price = market_price_ktk.get(crop_eng)
-        if price:
-            result["marketPrice"] = f"₹ {price} /quintal"
+        primary_result = enrich_existing_crop(
+            primary_result,
+            lang
+        )
 
-        # 🟣 PROFIT
-        if price and crop_eng in cultivation_cost and crop_eng in yield_per_acre:
-            yield_q = yield_per_acre[crop_eng]
-            profit = (price * yield_q) - cultivation_cost[crop_eng]
-            result["estimatedNetProfitPerAcre"] = f"₹ {profit} /acre"
+        # ================= SECONDARY CROPS =================
+        secondary_results = []
 
-        # 🟣 LANGUAGE TRANSLATION
-        if lang != "en":
-            result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
+        for sc in req.secondaryCrops:
+            if not sc.activityLogs:
+                continue
 
-            for key in ["cropManagement", "nutrientManagement",
-                        "waterManagement", "protectionManagement",
-                        "harvestMarketing"]:
-                try:
-                    result[key] = [translate_text(x, lang) for x in result[key]]
-                except:
-                    pass
+            sc_result = existing_crop_advisor.advise(
+                sc.activityLogs,
+                {"cropName": sc.cropName}
+            )
 
-            # Translate meta fields
-            for key in ["marketPrice", "estimatedNetProfitPerAcre"]:
-                try:
-                    result[key] = translate_text(result[key], lang)
-                except:
-                    pass
+            sc_result = enrich_existing_crop(
+                sc_result,
+                lang
+            )
 
-        return ExistingCropResponse(**result)
+            secondary_results.append(
+                ExistingCropResponse(**sc_result)
+            )
+
+        return ExistingCropFullResponse(
+            primaryCropAdvice=ExistingCropResponse(**primary_result),
+            secondaryCropsAdvice=secondary_results
+        )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    
-
 
 
 # ================ NEW CROP ADVICE =================
@@ -447,6 +447,7 @@ def detect_pest(req: PestDetectionRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
