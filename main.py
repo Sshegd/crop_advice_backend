@@ -232,8 +232,12 @@ CROP_NAME_KN = {
     "green gram": "ಹೇಶರು",
     "pigeon pea": "ತೊಗರಿ",
 }
-def enrich_existing_crop(base_result: dict, lang: str):
-    crop_eng = base_result["cropName"].lower().strip()
+def enrich_existing_crop(base_result: dict, lang: str, fallback_crop: str):
+    # Always ensure cropName exists
+    crop_name = base_result.get("cropName") or fallback_crop
+    crop_eng = crop_name.lower().strip()
+
+    base_result["cropName"] = crop_name
 
     # 💰 Market price
     price = market_price_ktk.get(crop_eng)
@@ -248,39 +252,11 @@ def enrich_existing_crop(base_result: dict, lang: str):
     else:
         base_result["estimatedNetProfitPerAcre"] = "Profit data unavailable"
 
-    # 🌐 Language translation
+    # 🌐 Language translation (optional)
     if lang != "en":
-        base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
-
-        #for key in [
-           # "cropManagement",
-            #"nutrientManagement",
-            #"waterManagement",
-            #"protectionManagement",
-            #"harvestMarketing",
-        #]:
-         #   base_result[key] = [
-          #      translate_text(item, lang) for item in base_result.get(key, [])
-           # ]
-
-        for m in ["marketPrice", "estimatedNetProfitPerAcre"]:
-            try:
-                base_result[m] = translate_text(base_result[m], lang)
-            except Exception:
-                pass
+        base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_name)
 
     return base_result
-
-def extract_latest_stage(logs: list) -> str | None:
-    if not logs:
-        return None
-
-    logs_sorted = sorted(
-        logs,
-        key=lambda x: x.get("timestamp", 0),
-        reverse=True
-    )
-    return logs_sorted[0].get("stage")
 
 
 
@@ -362,44 +338,37 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
     try:
         lang = (req.language or "en").lower()
 
-        # ================= PRIMARY CROP =================
-        primary_logs = req.activityLogs or []
+        # ================= PRIMARY =================
+        primary_crop = req.farmDetails.cropName or "unknown crop"
 
         raw_primary = existing_crop_advisor.advise(
-            primary_logs,
+            req.activityLogs or [],
             {
-                "cropName": req.farmDetails.cropName,
+                "cropName": primary_crop,
                 "district": req.farmDetails.district,
                 "taluk": req.farmDetails.taluk,
                 "soilType": req.farmDetails.soilType
             }
         ) or {}
 
-        raw_primary["cropName"] = req.farmDetails.cropName
-        raw_primary = enrich_existing_crop(raw_primary, lang)
+        raw_primary["cropName"] = primary_crop
+        raw_primary = enrich_existing_crop(raw_primary, lang, primary_crop)
+        primary_final = normalize_existing_crop(raw_primary, primary_crop)
 
-        primary_final = normalize_existing_crop(
-            raw_primary,
-            req.farmDetails.cropName
-        )
-
-        # ================= SECONDARY CROPS =================
+        # ================= SECONDARY =================
         secondary_results = []
 
         for sc in req.secondaryCrops or []:
+            sc_crop = sc.cropName or "secondary crop"
 
             raw_sc = existing_crop_advisor.advise(
                 sc.activityLogs or [],
-                {"cropName": sc.cropName}
+                {"cropName": sc_crop}
             ) or {}
 
-            raw_sc["cropName"] = sc.cropName
-            raw_sc = enrich_existing_crop(raw_sc, lang)
-
-            sc_final = normalize_existing_crop(
-                raw_sc,
-                sc.cropName
-            )
+            raw_sc["cropName"] = sc_crop
+            raw_sc = enrich_existing_crop(raw_sc, lang, sc_crop)
+            sc_final = normalize_existing_crop(raw_sc, sc_crop)
 
             secondary_results.append(
                 ExistingCropResponse(**sc_final)
@@ -411,6 +380,7 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
         )
 
     except Exception as e:
+        print("❌ EXISTING CROP ERROR:", str(e))  # VERY IMPORTANT
         raise HTTPException(status_code=500, detail=str(e))
         
 
@@ -522,6 +492,7 @@ def pest_risk(req: PestRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
