@@ -332,15 +332,14 @@ rainfall_range = {
 
 def normalize_existing_crop(result: dict, crop_name: str) -> dict:
     """
-    Ensures ALL required fields exist so FastAPI response validation NEVER fails
+    Ensures response ALWAYS matches ExistingCropResponse schema
     """
 
     return {
         "cropName": result.get("cropName") or crop_name,
 
         "cropManagement": result.get("cropManagement") or [
-            "Follow standard crop management practices suitable for this stage.",
-            "Regularly inspect the field for crop health and growth."
+            "Follow standard crop management practices suitable for this stage."
         ],
 
         "nutrientManagement": result.get("nutrientManagement") or [
@@ -360,7 +359,7 @@ def normalize_existing_crop(result: dict, crop_name: str) -> dict:
         ],
 
         "marketPrice": result.get("marketPrice"),
-        "estimatedNetProfitPerAcre": result.get("estimatedNetProfitPerAcre"),
+        "estimatedNetProfitPerAcre": result.get("estimatedNetProfitPerAcre")
     }
 
 
@@ -378,12 +377,16 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
         raw_primary = existing_crop_advisor.advise(
             primary_logs,
             {
-                **req.farmDetails.dict(),
-                "cropName": req.farmDetails.cropName
+                "cropName": req.farmDetails.cropName,
+                "district": req.farmDetails.district,
+                "taluk": req.farmDetails.taluk,
+                "soilType": req.farmDetails.soilType
             }
-        )
+        ) or {}
 
+        raw_primary["cropName"] = req.farmDetails.cropName
         raw_primary = enrich_existing_crop(raw_primary, lang)
+
         primary_final = normalize_existing_crop(
             raw_primary,
             req.farmDetails.cropName
@@ -397,10 +400,15 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
             raw_sc = existing_crop_advisor.advise(
                 sc.activityLogs or [],
                 {"cropName": sc.cropName}
-            )
+            ) or {}
 
+            raw_sc["cropName"] = sc.cropName
             raw_sc = enrich_existing_crop(raw_sc, lang)
-            sc_final = normalize_existing_crop(raw_sc, sc.cropName)
+
+            sc_final = normalize_existing_crop(
+                raw_sc,
+                sc.cropName
+            )
 
             secondary_results.append(
                 ExistingCropResponse(**sc_final)
@@ -495,36 +503,74 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
-@app.post("/pest/risk/multi")
-def pest_risk_multi(req: PestRiskRequest):
+@app.post("/pest/risk/user")
+def pest_risk_for_user(req: ExistingCropRequest):
+    """
+    Returns pest alerts for:
+    - Primary crop
+    - All secondary crops
+    Belonging to the logged-in user
+    """
 
     results = []
 
-    for crop_block in req.crops:
-        crop_name = crop_block.cropName
-        stage = extract_latest_stage(crop_block.activityLogs)
+    district = (req.farmDetails.district or "").lower()
+    soilType = (req.farmDetails.soilType or "").lower()
+    lang = (req.language or "en").lower()
 
-        alerts = pest_engine.predict(
-            cropName=crop_name,
-            district=req.district,
-            taluk=req.taluk,
-            soilType=req.soilType,
-            stage=stage,
-            temp=req.avgTemp,
-            humidity=req.humidity,
-            rainfall=req.rainfall,
-            month_int=req.month,
-            lang=req.language
+    # =========================
+    # 1️⃣ PRIMARY CROP
+    # =========================
+    primary_crop_name = req.farmDetails.cropName
+    primary_stage = extract_latest_stage(req.activityLogs)
+
+    primary_alerts = pest_engine.predict(
+        cropName=primary_crop_name,
+        district=district,
+        soilType=soilType,
+        stage=primary_stage,
+        temp=None,
+        humidity=None,
+        rainfall=None,
+        month_int=datetime.utcnow().month,
+        lang=lang
+    )
+
+    results.append({
+        "cropType": "PRIMARY",
+        "cropName": primary_crop_name,
+        "stage": primary_stage,
+        "alerts": primary_alerts
+    })
+
+    # =========================
+    # 2️⃣ SECONDARY CROPS
+    # =========================
+    for sc in req.secondaryCrops or []:
+        sc_stage = extract_latest_stage(sc.activityLogs)
+
+        sc_alerts = pest_engine.predict(
+            cropName=sc.cropName,
+            district=district,
+            soilType=soilType,
+            stage=sc_stage,
+            temp=None,
+            humidity=None,
+            rainfall=None,
+            month_int=datetime.utcnow().month,
+            lang=lang
         )
 
         results.append({
-            "cropName": crop_name,
-            "stage": stage,
-            "alerts": alerts
+            "cropType": "SECONDARY",
+            "cropName": sc.cropName,
+            "stage": sc_stage,
+            "alerts": sc_alerts
         })
 
     return {
         "status": "success",
+        "userId": req.userId,
         "pestRisks": results
     }
 
@@ -532,6 +578,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
