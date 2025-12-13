@@ -84,7 +84,7 @@ class CropLogBlock(BaseModel):
     stage: Optional[str] = None
     activityLogs: Optional[List[dict]] = []
     
-cclass PestRiskRequest(BaseModel):
+class PestRiskRequest(BaseModel):
     userId: str
     language: Optional[str] = "en"
 
@@ -578,6 +578,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
