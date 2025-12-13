@@ -256,16 +256,16 @@ def enrich_existing_crop(base_result: dict, lang: str):
     if lang != "en":
         base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
 
-        for key in [
-            "cropManagement",
-            "nutrientManagement",
-            "waterManagement",
-            "protectionManagement",
-            "harvestMarketing",
-        ]:
-            base_result[key] = [
-                translate_text(item, lang) for item in base_result.get(key, [])
-            ]
+        #for key in [
+           # "cropManagement",
+            #"nutrientManagement",
+            #"waterManagement",
+            #"protectionManagement",
+            #"harvestMarketing",
+        #]:
+         #   base_result[key] = [
+          #      translate_text(item, lang) for item in base_result.get(key, [])
+           # ]
 
         for m in ["marketPrice", "estimatedNetProfitPerAcre"]:
             try:
@@ -486,6 +486,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
