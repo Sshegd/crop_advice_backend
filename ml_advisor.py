@@ -182,99 +182,33 @@ class ExistingCropAdvisor:
             "harvestMarketing": []
         }
 
+        # ---------------- PROCESS ACTIVITY LOGS ----------------
         for log in logs:
-            sub = log.get("subActivity", "").strip().lower()
+            sub = (log.get("subActivity") or "").strip().lower()
 
             # 🌱 CROP SELECTION
             if sub == "crop_selection":
-                variety = log.get("varietyName", "")
+                variety = log.get("varietyName")
                 if variety:
-                    rec["cropManagement"].append(f"Selected '{variety}' – ensure certified seedlings and healthy planting material.")
-                else:
-                    rec["cropManagement"].append("Use certified high-yielding seedlings for better establishment.")
+                    rec["cropManagement"].append(
+                        f"Selected variety '{variety}'. Ensure certified planting material and proper spacing."
+                    )
 
             # 🧪 SOIL PREPARATION
             elif sub == "soil_preparation":
                 soil = log.get("soilTest", {})
                 pH = soil.get("pH")
-                if pH:
+
+                if pH is not None:
                     if pH < 6:
-                        rec["nutrientManagement"].append("Soil pH is low — apply lime @ 200 kg/acre.")
+                        rec["nutrientManagement"].append(
+                            "Soil pH is low. Apply lime @ 200 kg/acre to improve nutrient availability."
+                        )
                     elif pH > 7.5:
-                        rec["nutrientManagement"].append("Soil pH is high — apply gypsum @ 100 kg/acre.")
+                        rec["nutrientManagement"].append(
+                            "Soil pH is high. Apply gypsum @ 100 kg/acre."
+                        )
 
-                base_fert = log.get("baseFertilizer", {})
+                base_fert = log.get("baseFertilizer")
                 if base_fert:
-                    rec["nutrientManagement"].append(f"Base fertilizer applied: {base_fert.get('name')} {base_fert.get('quantity')}. Continue FYM yearly.")
-
-                rec["cropManagement"].append("Land preparation completed — good foundation for root development.")
-
-            # 🌾 SOWING / PLANTING
-            elif sub == "sowing_planting":
-                method = log.get("plantingMethod", "")
-                rec["cropManagement"].append(f"Planting method: {method}. Maintain proper spacing to avoid overcrowding.")
-
-            # 💧 WATER MANAGEMENT
-            elif sub == "water_management":
-                freq = log.get("frequencyDays")
-                methods = ", ".join(log.get("methods", []))
-                rec["waterManagement"].append(f"Irrigate every {freq} days using {methods} to prevent moisture stress.")
-
-            # 🧪 FERTILIZER / NPK DOSES
-            elif sub == "nutrient_management":
-                for app in log.get("applications", []):
-                    nm = app.get("fertilizerName")
-                    qty = app.get("quantity")
-                    gap = app.get("gapDays")
-                    rec["nutrientManagement"].append(
-                        f"{nm} applied @ {qty}. Next dose after {gap} days."
-                    )
-
-            # 🛡 PEST / DISEASE CONTROL
-            elif sub == "crop_protection_maintenance":
-                pest = log.get("pestDiseaseName", "")
-                prod = log.get("controlDetails", {}).get("productName")
-                dose = log.get("controlDetails", {}).get("doseMethod")
-                rec["protectionManagement"].append(
-                    f"{pest} detected — use {prod}, dosage {dose}."
-                )
-
-            # 🌾 HARVEST
-            elif sub == "harvesting_cut_gather":
-                qty = log.get("yieldQuantity")
-                rec["harvestMarketing"].append(
-                    f"Yield recorded: {qty} kg. Dry properly and grade nuts before storing."
-                )
-
-            # 💰 MARKETING
-            elif sub == "marketing_distribution":
-                buyer = log.get("buyer")
-                rec["harvestMarketing"].append(
-                    f"Sold to {buyer}. Compare nearby market prices weekly to maximize profit."
-                )
-
-        # ---- Fallbacks only if category was not filled ----
-        if not rec["cropManagement"]:
-            if logs:
-                rec["cropManagement"].append(
-                    f"Based on your recent farm activities for {crop}, continue current practices and monitor crop health."
-                )
-            else:
-                rec["cropManagement"].append(
-                    f"No recent activity logs found for {crop}. Please update farm activities for better advice."
-            )
-        if not rec["nutrientManagement"]:
-            rec["nutrientManagement"].append("Follow season-wise NPK schedule based on soil test.")
-        if not rec["waterManagement"]:
-            rec["waterManagement"].append("Maintain irrigation based on soil moisture.")
-        if not rec["protectionManagement"]:
-            rec["protectionManagement"].append("Monitor for pests weekly and apply bio-control when symptoms appear.")
-        if not rec["harvestMarketing"]:
-            rec["harvestMarketing"].append("Harvest at maturity and store in dry ventilated room.")
-
-        return {
-            "cropName": crop,
-            **rec
-        }
-
-
+                    rec
