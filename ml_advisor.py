@@ -255,13 +255,13 @@ class ExistingCropAdvisor:
 
         # ---- Fallbacks only if category was not filled ----
         if not rec["cropManagement"]:
-        if logs:
-            rec["cropManagement"].append(
-                f"Based on your recent farm activities for {crop}, continue current practices and monitor crop health."
-            )
-        else:
-            rec["cropManagement"].append(
-                f"No recent activity logs found for {crop}. Please update farm activities for better advice."
+            if logs:
+                rec["cropManagement"].append(
+                    f"Based on your recent farm activities for {crop}, continue current practices and monitor crop health."
+                )
+            else:
+                rec["cropManagement"].append(
+                    f"No recent activity logs found for {crop}. Please update farm activities for better advice."
             )
         if not rec["nutrientManagement"]:
             rec["nutrientManagement"].append("Follow season-wise NPK schedule based on soil test.")
@@ -276,4 +276,5 @@ class ExistingCropAdvisor:
             "cropName": crop,
             **rec
         }
+
 
