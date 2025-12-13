@@ -330,6 +330,39 @@ rainfall_range = {
 }
 
 
+def normalize_existing_crop(result: dict, crop_name: str) -> dict:
+    """
+    Ensures ALL required fields exist so FastAPI response validation NEVER fails
+    """
+
+    return {
+        "cropName": result.get("cropName") or crop_name,
+
+        "cropManagement": result.get("cropManagement") or [
+            "Follow standard crop management practices suitable for this stage.",
+            "Regularly inspect the field for crop health and growth."
+        ],
+
+        "nutrientManagement": result.get("nutrientManagement") or [
+            "Apply nutrients based on soil condition and crop requirement."
+        ],
+
+        "waterManagement": result.get("waterManagement") or [
+            "Maintain proper soil moisture and avoid water stress."
+        ],
+
+        "protectionManagement": result.get("protectionManagement") or [
+            "Monitor pests and diseases and take preventive measures early."
+        ],
+
+        "harvestMarketing": result.get("harvestMarketing") or [
+            "Harvest at proper maturity and follow local market trends."
+        ],
+
+        "marketPrice": result.get("marketPrice"),
+        "estimatedNetProfitPerAcre": result.get("estimatedNetProfitPerAcre"),
+    }
+
 
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
@@ -342,7 +375,7 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
         # ================= PRIMARY CROP =================
         primary_logs = req.activityLogs or []
 
-        primary_result = existing_crop_advisor.advise(
+        raw_primary = existing_crop_advisor.advise(
             primary_logs,
             {
                 **req.farmDetails.dict(),
@@ -350,48 +383,31 @@ def existing_primary_secondary_advice(req: ExistingCropRequest):
             }
         )
 
-        # 🔥 FALLBACK IF EMPTY
-        if not primary_result.get("cropManagement"):
-            primary_result["cropManagement"] = [
-                "Follow recommended practices for the current growth stage.",
-                "Regularly monitor crop health and field conditions."
-            ]
-            primary_result.setdefault("nutrientManagement", [])
-            primary_result.setdefault("waterManagement", [])
-            primary_result.setdefault("protectionManagement", [])
-            primary_result.setdefault("harvestMarketing", [])
-
-        primary_result = enrich_existing_crop(primary_result, lang)
+        raw_primary = enrich_existing_crop(raw_primary, lang)
+        primary_final = normalize_existing_crop(
+            raw_primary,
+            req.farmDetails.cropName
+        )
 
         # ================= SECONDARY CROPS =================
         secondary_results = []
 
         for sc in req.secondaryCrops or []:
-            sc_logs = sc.activityLogs or []
 
-            sc_result = existing_crop_advisor.advise(
-                sc_logs,
+            raw_sc = existing_crop_advisor.advise(
+                sc.activityLogs or [],
                 {"cropName": sc.cropName}
             )
 
-            # 🔥 FALLBACK
-            if not sc_result.get("cropManagement"):
-                sc_result["cropManagement"] = [
-                    "Maintain crop hygiene and follow standard agronomic practices."
-                ]
-                sc_result.setdefault("nutrientManagement", [])
-                sc_result.setdefault("waterManagement", [])
-                sc_result.setdefault("protectionManagement", [])
-                sc_result.setdefault("harvestMarketing", [])
-
-            sc_result = enrich_existing_crop(sc_result, lang)
+            raw_sc = enrich_existing_crop(raw_sc, lang)
+            sc_final = normalize_existing_crop(raw_sc, sc.cropName)
 
             secondary_results.append(
-                ExistingCropResponse(**sc_result)
+                ExistingCropResponse(**sc_final)
             )
 
         return ExistingCropFullResponse(
-            primaryCropAdvice=ExistingCropResponse(**primary_result),
+            primaryCropAdvice=ExistingCropResponse(**primary_final),
             secondaryCropsAdvice=secondary_results
         )
 
@@ -516,6 +532,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
