@@ -69,12 +69,19 @@ class PestEngine:
                 reasons.append(f"Humidity {hum}% < {rule['humidity_lt']}%")
 
         # 🌧 Rainfall
+        if "rainfall_range" in rule and rain is not None:
+            total += 1
+             lo, hi = rule["rainfall_range"]
+            if rain <= rain<=hi:
+                matched += 1
+                reasons.append(f"Rainfall {rain}mm > in {lo}-{hi}mm")
+
         if "rainfall_gt" in rule and rain is not None:
             total += 1
             if rain > rule["rainfall_gt"]:
                 matched += 1
                 reasons.append(f"Rainfall {rain}mm > {rule['rainfall_gt']}mm")
-
+                
         if "rainfall_lt" in rule and rain is not None:
             total += 1
             if rain < rule["rainfall_lt"]:
@@ -101,6 +108,7 @@ class PestEngine:
             if soilType in rule["soil"]:
                 matched += 1
                 reasons.append(f"Soil matched: {soilType}")
+        
 
         # 📊 Base score
         score = matched / total if total > 0 else 0.0
@@ -136,11 +144,10 @@ class PestEngine:
         soilType = soilType.lower().strip() if soilType else None
         stage = stage.lower().strip() if stage else None
 
-        month_name = self._month_name(month_int)
-
         if crop not in self.pest_db:
             return []
 
+        month_name = self._month_name(month_int)
         alerts = []
 
         for pest_name, rule in self.pest_db[crop].items():
@@ -162,10 +169,11 @@ class PestEngine:
                 and crop in self.pest_history[district]
                 and pest_name in self.pest_history[district][crop]
             ):
-                historical = self.pest_history[district][crop][pest_name]["risk_level"]
-                boost = {"LOW": 0.10, "MEDIUM": 0.20, "HIGH": 0.30}.get(historical, 0)
+                risk = self.pest_history[district][crop][pest_name]["risk_level"]
+                boost_map = {"LOW": 0.10, "MEDIUM": 0.20, "HIGH": 0.30}
+                boost = boost_map.get(risk, 0)
                 score = min(1.0, score + boost)
-                reasons.append(f"Historical risk in {district}: {historical}")
+                reasons.append(f"Historical risk in {district}: {risk}")
 
             # ⚠ Lower threshold for early warning
             if score < 0.30:
@@ -196,3 +204,4 @@ class PestEngine:
             }]
 
         return alerts
+
