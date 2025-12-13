@@ -1,4 +1,6 @@
-
+import firebase_admin
+import os
+import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -9,9 +11,25 @@ from pest_engine import PestEngine
 from pest_db_extended import PEST_DB
 from district_pest_history import PEST_HISTORY
 from typing import List
+from firebase_admin import credentials, db
 
 
+firebase_json = os.getenv("SERVICE_ACCOUNT_KEY")
 
+if not firebase_json:
+    raise RuntimeError("SERVICE_ACCOUNT_KEY env var not set")
+cred_dict=json.loads(firebase_json)
+
+
+if not firebase_admin._apps:
+    firebase_admin.initialize_app(
+        cred,
+        {
+            "databaseURL": "https://krishisakhi-fc477-default-rtdb.firebaseio.com"
+        }
+    )
+
+firebase_db = db
 
 app = FastAPI(title="Crop Advisory Backend")
 
@@ -19,6 +37,9 @@ new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
 engine = PestEngine(PEST_DB, PEST_HISTORY)
 
+
+
+firebase_db = db
 # ============== MODELS =================
 class FarmDetails(BaseModel):
     cropName: Optional[str] = None
@@ -46,8 +67,6 @@ class ExistingCropResponse(BaseModel):
     waterManagement: List[str]
     protectionManagement: List[str]
     harvestMarketing: List[str]
-    marketPrice: Optional[str] = None
-    estimatedNetProfitPerAcre: Optional[str] = None
 
 
 class ExistingCropFullResponse(BaseModel):
@@ -109,21 +128,33 @@ class CropRisk(BaseModel):
 class PestRiskResponse(BaseModel):
     alerts: List[PestAlert]
     
-def get_user_crops(db, user_id: str):
-    crops = {}
-    logs = db.child("Users").child(user_id).child("farmActivityLogs").get() or {}
+def get_user_crops(firebase_db, user_id: str):
+    ref = firebase_db.reference(f"Users/{user_id}")
+    user = ref.get()
 
-    for crop_key, activities in logs.items():
-        for _, act in activities.items():
-            name = act.get("cropName")
-            stage = act.get("stage")
-            if name:
-                crops[name.lower()] = stage
+    if not user:
+        return []
 
-    return [
-        {"cropName": k, "stage": v}
-        for k, v in crops.items()
-    ]
+    crops = []
+
+    # PRIMARY CROP
+    primary_logs = user.get("farmActivityLogs", {})
+    farm = user.get("farmDetails", {})
+
+    if primary_logs:
+        crops.append({
+            "cropName": farm.get("cropName", "Unknown Crop"),
+            "activityLogs": list(primary_logs.values())
+        })
+
+    # SECONDARY CROPS
+    for crop, data in user.get("secondaryCrops", {}).items():
+        crops.append({
+            "cropName": crop,
+            "activityLogs": list(data.get("activityLogs", {}).values())
+        })
+
+    return crops
 
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
@@ -320,43 +351,33 @@ rainfall_range = {
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
 
-@app.post("/advice/existing/full")
-def existing_primary_secondary_advice(req: ExistingCropRequest):
+@app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
+def existing_crop_advice(req: ExistingCropRequest):
 
-    try:
-        lang = (req.language or "en").lower()
+    # -------- PRIMARY CROP --------
+    primary = existing_crop_advisor.advise(
+        req.activityLogs,
+        req.farmDetails.cropName
+    )
 
-        # ================= PRIMARY CROP =================
-        primary_result = existing_crop_advisor.advise(
-            logs=req.activityLogs,
-            farm_details=req.farmDetails.dict()
+    primary_resp = ExistingCropResponse(**primary)
+
+    # -------- SECONDARY CROPS --------
+    secondary_responses = []
+
+    for sc in req.secondaryCrops:
+        sc_result = existing_crop_advisor.advise(
+            sc.activityLogs,
+            sc.cropName
+        )
+        secondary_responses.append(
+            ExistingCropResponse(**sc_result)
         )
 
-        # Translate if required
-        if lang != "en":
-            primary_result = translate_existing_crop(primary_result, lang)
-
-        # ================= SECONDARY CROPS =================
-        secondary_results = []
-
-        for sc in req.secondaryCrops:
-            sc_result = existing_crop_advisor.advise(
-                logs=sc.activityLogs,
-                farm_details={"cropName": sc.cropName}
-            )
-
-            if lang != "en":
-                sc_result = translate_existing_crop(sc_result, lang)
-
-            secondary_results.append(sc_result)
-
-        return {
-            "primaryCropAdvice": primary_result,
-            "secondaryCropsAdvice": secondary_results
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return ExistingCropFullResponse(
+        primaryCropAdvice=primary_resp,
+        secondaryCropsAdvice=secondary_responses
+    )
         
 
        
@@ -442,7 +463,7 @@ def new_crop_advice(req: NewCropRequest):
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
 
-    crops = get_user_crops(firebase_db, req.userId)
+    
 
     if not crops:
         return {"alerts": []}
@@ -479,6 +500,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
