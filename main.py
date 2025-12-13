@@ -14,18 +14,17 @@ from typing import List
 from firebase_admin import credentials, db
 
 
-firebase_json = os.getenv("SERVICE_ACCOUNT_KEY")
+firebase_credentials = json.loads(
+    os.environ["FIREBASE_CREDENTIALS"]
+)
 
-if not firebase_json:
-    raise RuntimeError("SERVICE_ACCOUNT_KEY env var not set")
-cred_dict=json.loads(firebase_json)
-
+cred = credentials.Certificate(firebase_credentials)
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app(
         cred,
         {
-            "databaseURL": "https://krishisakhi-fc477-default-rtdb.firebaseio.com"
+            "databaseURL": os.environ["FIREBASE_DB_URL"]
         }
     )
 
@@ -67,6 +66,8 @@ class ExistingCropResponse(BaseModel):
     waterManagement: List[str]
     protectionManagement: List[str]
     harvestMarketing: List[str]
+    marketPrice: Optional[str] = None
+    estimatedNetProfitPerAcre: Optional[str] = None
 
 
 class ExistingCropFullResponse(BaseModel):
@@ -356,11 +357,18 @@ def existing_crop_advice(req: ExistingCropRequest):
 
     # -------- PRIMARY CROP --------
     primary = existing_crop_advisor.advise(
-        req.activityLogs,
-        req.farmDetails.cropName
+    req.activityLogs,
+    req.farmDetails.cropName
+    )
+
+    primary = enrich_existing_crop(
+        primary,
+        req.language or "en",
+        req.farmDetails.cropName or "Unknown Crop"
     )
 
     primary_resp = ExistingCropResponse(**primary)
+
 
     # -------- SECONDARY CROPS --------
     secondary_responses = []
@@ -370,14 +378,14 @@ def existing_crop_advice(req: ExistingCropRequest):
             sc.activityLogs,
             sc.cropName
         )
-        secondary_responses.append(
-            ExistingCropResponse(**sc_result)
+        sc_result = enrich_existing_crop(
+            sc_result,
+            req.language or "en",
+            sc.cropName
         )
-
-    return ExistingCropFullResponse(
-        primaryCropAdvice=primary_resp,
-        secondaryCropsAdvice=secondary_responses
-    )
+        secondary_responses.append(
+            ExistingCropRensponse(**sc_result)
+        )
         
 
        
@@ -463,7 +471,8 @@ def new_crop_advice(req: NewCropRequest):
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
 
-    
+    # 1️⃣ Fetch crops of logged-in user from Firebase
+    crops = get_user_crops(firebase_db, req.userId)
 
     if not crops:
         return {"alerts": []}
@@ -471,27 +480,44 @@ def pest_risk(req: PestRiskRequest):
     alerts = []
 
     for crop in crops:
+
+        crop_name = crop.get("cropName")
+        logs = crop.get("activityLogs", [])
+
+        # 2️⃣ Extract latest stage from logs (SAFE)
+        stage = None
+        if logs:
+            latest = sorted(
+                logs,
+                key=lambda x: x.get("timestamp", 0),
+                reverse=True
+            )[0]
+            stage = latest.get("stage")
+
+        # 3️⃣ Fetch farm details (district / soil)
+        user_ref = firebase_db.reference(f"Users/{req.userId}")
+        user = user_ref.get() or {}
+        farm = user.get("farmDetails", {})
+
+        district = farm.get("district")
+        soilType = farm.get("soilType")
+
+        # 4️⃣ Run pest engine
         results = engine.predict(
-            cropName=crop["cropName"],
-            stage=crop["stage"],
-            district=None,      # can be enhanced later
-            soilType=None,
+            cropName=crop_name,
+            stage=stage,
+            district=district,
+            soilType=soilType,
             temp=None,
             humidity=None,
-            month_int=datetime.now().month
+            rainfall=None,
+            month_int=datetime.now().month,
+            lang=req.language
         )
 
+        # 5️⃣ Collect alerts
         for r in results:
-            alerts.append({
-                "cropName": crop["cropName"],
-                "pestName": r["pestName"],
-                "riskLevel": r["riskLevel"],
-                "score": r["score"],
-                "reasons": r["reasons"],
-                "symptoms": r["symptoms"],
-                "preventive": r["preventive"],
-                "corrective": r["corrective"]
-            })
+            alerts.append(PestAlert(**r))
 
     return {"alerts": alerts}
 
@@ -500,6 +526,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
