@@ -16,7 +16,7 @@ app = FastAPI(title="Crop Advisory Backend")
 
 new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
-pest_engine = PestEngine(PEST_DB, PEST_HISTORY)
+engine = PestEngine(PEST_DB, PEST_HISTORY)
 
 # ============== MODELS =================
 class FarmDetails(BaseModel):
@@ -41,15 +41,6 @@ class ExistingCropRequest(BaseModel):
     secondaryCrops: Optional[List[SecondaryCropModel]] = []
 
     language: Optional[str] = "en"
-
-
-class CropLogBlock(BaseModel):
-    cropKey: str
-    cropName: str
-    activityLogs: List[dict] = []
-
-
-
 
 
 class ExistingCropResponse(BaseModel):
@@ -94,18 +85,18 @@ class NewCropAdvice(BaseModel):
 class NewCropResponse(BaseModel):
     recommendations: List[NewCropAdvice]
 
-# ==========================
-# PEST DETECTION MODELS
-class PestRiskRequest(BaseModel):
-    crops: List[CropLogBlock]
-    district: Optional[str]
-    taluk: Optional[str]
-    soilType: Optional[str]
-    avgTemp: Optional[float]
-    humidity: Optional[float]
-    rainfall: Optional[float]
-    month: Optional[int]
-    language: Optional[str] = "en"
+
+class CropLog(BaseModel):
+    cropName: str
+    stage: Optional[str] = None
+    
+class PestRequest(BaseModel):
+    crops: List[CropLog]
+    district: str
+    soilType: str
+    avgTemp: float
+    humidity: float
+    month: int
 
 class PestAlert(BaseModel):
     cropName: str
@@ -503,81 +494,35 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
-@app.post("/pest/risk/user")
-def pest_risk_for_user(req: ExistingCropRequest):
-    """
-    Returns pest alerts for:
-    - Primary crop
-    - All secondary crops
-    Belonging to the logged-in user
-    """
-
+@app.post("/pest/risk")
+def pest_risk(req: PestRequest):
     results = []
 
-    district = (req.farmDetails.district or "").lower()
-    soilType = (req.farmDetails.soilType or "").lower()
-    lang = (req.language or "en").lower()
-
-    # =========================
-    # 1️⃣ PRIMARY CROP
-    # =========================
-    primary_crop_name = req.farmDetails.cropName
-    primary_stage = extract_latest_stage(req.activityLogs)
-
-    primary_alerts = pest_engine.predict(
-        cropName=primary_crop_name,
-        district=district,
-        soilType=soilType,
-        stage=primary_stage,
-        temp=None,
-        humidity=None,
-        rainfall=None,
-        month_int=datetime.utcnow().month,
-        lang=lang
-    )
-
-    results.append({
-        "cropType": "PRIMARY",
-        "cropName": primary_crop_name,
-        "stage": primary_stage,
-        "alerts": primary_alerts
-    })
-
-    # =========================
-    # 2️⃣ SECONDARY CROPS
-    # =========================
-    for sc in req.secondaryCrops or []:
-        sc_stage = extract_latest_stage(sc.activityLogs)
-
-        sc_alerts = pest_engine.predict(
-            cropName=sc.cropName,
-            district=district,
-            soilType=soilType,
-            stage=sc_stage,
-            temp=None,
-            humidity=None,
-            rainfall=None,
-            month_int=datetime.utcnow().month,
-            lang=lang
+    for crop in req.crops:
+        alerts = engine.predict(
+            cropName=crop.cropName,
+            district=req.district,
+            soilType=req.soilType,
+            stage=crop.stage,
+            temp=req.avgTemp,
+            humidity=req.humidity,
+            month_int=req.month
         )
 
         results.append({
-            "cropType": "SECONDARY",
-            "cropName": sc.cropName,
-            "stage": sc_stage,
-            "alerts": sc_alerts
+            "cropName": crop.cropName,
+            "alerts": alerts
         })
 
     return {
         "status": "success",
-        "userId": req.userId,
         "pestRisks": results
     }
-
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
