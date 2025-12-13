@@ -31,7 +31,7 @@ class SecondaryCropModel(BaseModel):
     cropName: str
     activityLogs: List[Dict] = []
 
-class ExistingRequest(BaseModel):
+class ExistingCropRequest(BaseModel):
     cropKey: str
     cropName: Optional[str] = None
     farmDetails: FarmDetails
@@ -486,6 +486,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
