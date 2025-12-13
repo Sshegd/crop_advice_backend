@@ -31,7 +31,7 @@ class SecondaryCropModel(BaseModel):
     cropName: str
     activityLogs: List[Dict] = []
 
-class SingleExistingRequest(BaseModel):
+class ExistingRequest(BaseModel):
     cropKey: str
     cropName: Optional[str] = None
     farmDetails: FarmDetails
@@ -236,6 +236,44 @@ CROP_NAME_KN = {
     "green gram": "ಹೇಶರು",
     "pigeon pea": "ತೊಗರಿ",
 }
+def enrich_existing_crop(base_result: dict, lang: str):
+    crop_eng = base_result["cropName"].lower().strip()
+
+    # 💰 Market price
+    price = market_price_ktk.get(crop_eng)
+    base_result["marketPrice"] = (
+        f"₹ {price} /quintal" if price else "Market data unavailable"
+    )
+
+    # 📈 Profit
+    if price and crop_eng in cultivation_cost and crop_eng in yield_per_acre:
+        net = (price * yield_per_acre[crop_eng]) - cultivation_cost[crop_eng]
+        base_result["estimatedNetProfitPerAcre"] = f"₹ {net} /acre"
+    else:
+        base_result["estimatedNetProfitPerAcre"] = "Profit data unavailable"
+
+    # 🌐 Language translation
+    if lang != "en":
+        base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_eng)
+
+        for key in [
+            "cropManagement",
+            "nutrientManagement",
+            "waterManagement",
+            "protectionManagement",
+            "harvestMarketing",
+        ]:
+            base_result[key] = [
+                translate_text(item, lang) for item in base_result.get(key, [])
+            ]
+
+        for m in ["marketPrice", "estimatedNetProfitPerAcre"]:
+            try:
+                base_result[m] = translate_text(base_result[m], lang)
+            except Exception:
+                pass
+
+    return base_result
 
 
 
@@ -447,6 +485,7 @@ def detect_pest(req: PestDetectionRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
