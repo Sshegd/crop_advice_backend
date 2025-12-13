@@ -38,7 +38,10 @@ class ExistingRequest(BaseModel):
     activityLogs: List[Dict]
     language: Optional[str] = "en"
 
-
+class CropLogBlock(BaseModel):
+    cropKey: str
+    cropName: str
+    activityLogs: List[dict] = []
 
 
 
@@ -88,18 +91,15 @@ class NewCropResponse(BaseModel):
 
 # ==========================
 # PEST DETECTION MODELS
-# ==========================
-class PestDetectionRequest(BaseModel):
-    cropName: str
-    district: Optional[str] = None
-    taluk: Optional[str] = None
-    soilType: Optional[str] = None
-    stage: Optional[str] = None
-    avgTemp: Optional[float] = None
-    humidity: Optional[float] = None
-    rainfall: Optional[float] = None
-    month: Optional[int] = None
-    symptomsText: Optional[str] = None
+class PestRiskRequest(BaseModel):
+    crops: List[CropLogBlock]
+    district: Optional[str]
+    taluk: Optional[str]
+    soilType: Optional[str]
+    avgTemp: Optional[float]
+    humidity: Optional[float]
+    rainfall: Optional[float]
+    month: Optional[int]
     language: Optional[str] = "en"
 
 class PestAlert(BaseModel):
@@ -275,6 +275,16 @@ def enrich_existing_crop(base_result: dict, lang: str):
 
     return base_result
 
+def extract_latest_stage(logs: list) -> str | None:
+    if not logs:
+        return None
+
+    logs_sorted = sorted(
+        logs,
+        key=lambda x: x.get("timestamp", 0),
+        reverse=True
+    )
+    return logs_sorted[0].get("stage")
 
 
 
@@ -445,46 +455,44 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
-@app.post("/pest/detect", response_model=PestResponse)
-def detect_pest(req: PestDetectionRequest):
-    try:
+@app.post("/pest/risk/multi")
+def pest_risk_multi(req: PestRiskRequest):
+
+    results = []
+
+    for crop_block in req.crops:
+        crop_name = crop_block.cropName
+        stage = extract_latest_stage(crop_block.activityLogs)
 
         alerts = pest_engine.predict(
-            cropName=req.cropName,
+            cropName=crop_name,
             district=req.district,
             taluk=req.taluk,
-            soilType=req.soilType,       # important
-            stage=req.stage,
+            soilType=req.soilType,
+            stage=stage,
             temp=req.avgTemp,
             humidity=req.humidity,
             rainfall=req.rainfall,
             month_int=req.month,
-            lang=req.language,
+            lang=req.language
         )
 
-        formatted = [
-            PestAlert(
-                cropName=req.cropName,
-                pestName=a["pestName"],
-                riskLevel=a["riskLevel"],
-                score=a["score"],
-                reasons=a["reasons"],
-                symptoms=a["symptoms"],
-                preventive=a["preventive"],
-                corrective=a["corrective"]
-            )
-            for a in alerts
-        ]
+        results.append({
+            "cropName": crop_name,
+            "stage": stage,
+            "alerts": alerts
+        })
 
-        return PestResponse(alerts=formatted)
-
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    return {
+        "status": "success",
+        "pestRisks": results
+    }
 
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
