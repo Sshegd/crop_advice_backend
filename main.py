@@ -30,11 +30,13 @@ class SecondaryCropModel(BaseModel):
     cropName: str
     activityLogs: List[Dict] = []
 
+
 class ExistingCropRequest(BaseModel):
+    language: Optional[str] = "en"          # ✅ REQUIRED
     farmDetails: FarmDetails
-    activityLogs: List[Dict] = []          # primary crop logs
+    activityLogs: List[Dict] = []           # primary crop logs
     secondaryCrops: List[SecondaryCropModel] = []
-    language: Optional[str] = "en"
+
 
 
 class ExistingCropResponse(BaseModel):
@@ -245,72 +247,6 @@ CROP_NAME_KN = {
     "pigeon pea": "ತೊಗರಿ",
 }
 
-class ExistingCropAdvisor:
-
-    def advise(self, logs, crop_name: str | None):
-
-        crop = crop_name or "Unknown Crop"
-
-        if not logs:
-            return {
-                "cropName": crop,
-                "cropManagement": ["No activity logs found yet. Please add farm activities."],
-                "nutrientManagement": [],
-                "waterManagement": [],
-                "protectionManagement": [],
-                "harvestMarketing": []
-            }
-
-        rec = {
-            "cropManagement": [],
-            "nutrientManagement": [],
-            "waterManagement": [],
-            "protectionManagement": [],
-            "harvestMarketing": []
-        }
-
-        for log in logs:
-            sub = (log.get("subActivity") or "").lower()
-
-            if sub == "soil_preparation":
-                rec["cropManagement"].append(
-                    "Soil preparation completed. Ensure proper leveling and drainage."
-                )
-
-            elif sub == "sowing_planting":
-                rec["cropManagement"].append(
-                    "Crop planted successfully. Maintain recommended spacing."
-                )
-
-            elif sub == "nutrient_management":
-                rec["nutrientManagement"].append(
-                    "Apply fertilizers in split doses as per crop stage."
-                )
-
-            elif sub == "water_management":
-                rec["waterManagement"].append(
-                    "Maintain optimal soil moisture. Avoid water stress."
-                )
-
-            elif sub == "crop_protection_maintenance":
-                rec["protectionManagement"].append(
-                    "Monitor pests weekly and apply control measures if needed."
-                )
-
-            elif sub == "harvesting_cut_gather":
-                rec["harvestMarketing"].append(
-                    "Harvest at proper maturity and store in dry conditions."
-                )
-
-        # Final safety fallback
-        for k in rec:
-            if not rec[k]:
-                rec[k].append("Follow recommended best practices for this crop.")
-
-        return {
-            "cropName": crop,
-            **rec
-        }
 
 def enrich_existing_crop(base_result: dict, lang: str, fallback_crop: str):
     # Always ensure cropName exists
@@ -401,34 +337,43 @@ riskLevel = (
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
 
-@app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
-def existing_crop_advice(req: ExistingCropRequest):
+@app.post("/advice/existing/full")
+def existing_primary_secondary_advice(req: ExistingCropRequest):
 
-    advisor = ExistingCropAdvisor()
+    try:
+        lang = (req.language or "en").lower()
 
-    # ---------- PRIMARY CROP ----------
-    primary_crop = req.farmDetails.cropName or "Primary Crop"
-
-    primary_advice = advisor.advise(
-        req.activityLogs,
-        primary_crop
-    )
-
-    # ---------- SECONDARY CROPS ----------
-    secondary_results = []
-    for sc in req.secondaryCrops:
-        sc_advice = advisor.advise(
-            sc.activityLogs,
-            sc.cropName
-        )
-        secondary_results.append(
-            ExistingCropResponse(**sc_advice)
+        # ================= PRIMARY CROP =================
+        primary_result = existing_crop_advisor.advise(
+            logs=req.activityLogs,
+            farm_details=req.farmDetails.dict()
         )
 
-    return ExistingCropFullResponse(
-        primaryCropAdvice=ExistingCropResponse(**primary_advice),
-        secondaryCropsAdvice=secondary_results
-    )
+        # Translate if required
+        if lang != "en":
+            primary_result = translate_existing_crop(primary_result, lang)
+
+        # ================= SECONDARY CROPS =================
+        secondary_results = []
+
+        for sc in req.secondaryCrops:
+            sc_result = existing_crop_advisor.advise(
+                logs=sc.activityLogs,
+                farm_details={"cropName": sc.cropName}
+            )
+
+            if lang != "en":
+                sc_result = translate_existing_crop(sc_result, lang)
+
+            secondary_results.append(sc_result)
+
+        return {
+            "primaryCropAdvice": primary_result,
+            "secondaryCropsAdvice": secondary_results
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
         
 
        
@@ -551,6 +496,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
