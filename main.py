@@ -14,6 +14,9 @@ from typing import List
 from firebase_admin import credentials, db
 
 
+app = FastAPI(title="Crop Advisory Backend")
+
+
 firebase_credentials = json.loads(
     os.environ["FIREBASE_CREDENTIALS"]
 )
@@ -30,10 +33,10 @@ if not firebase_admin._apps:
 
 firebase_db = db
 
-app = FastAPI(title="Crop Advisory Backend")
+
 
 new_crop_advisor = NewCropAdvisor()
-existing_crop_advisor = ExistingCropAdvisor()
+advisor = ExistingCropAdvisor()
 engine = PestEngine(PEST_DB, PEST_HISTORY)
 
 
@@ -355,38 +358,27 @@ rainfall_range = {
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
 
-    # -------- PRIMARY CROP --------
-    primary = existing_crop_advisor.advise(
-    req.activityLogs,
-    req.farmDetails.cropName
-    )
-
-    primary = enrich_existing_crop(
-        primary,
-        req.language or "en",
-        req.farmDetails.cropName or "Unknown Crop"
+    # PRIMARY
+    primary = advisor.advise(
+        req.activityLogs,
+        req.farmDetails.cropName
     )
 
     primary_resp = ExistingCropResponse(**primary)
 
-
-    # -------- SECONDARY CROPS --------
-    secondary_responses = []
-
+    # SECONDARY
+    secondary_resp = []
     for sc in req.secondaryCrops:
-        sc_result = existing_crop_advisor.advise(
-            sc.activityLogs,
-            sc.cropName
+        sc_result = advisor.advise(sc.activityLogs, sc.cropName)
+        secondary_resp.append(
+            ExistingCropResponse(**sc_result)
         )
-        sc_result = enrich_existing_crop(
-            sc_result,
-            req.language or "en",
-            sc.cropName
-        )
-        secondary_responses.append(
-            ExistingCropRensponse(**sc_result)
-        )
-        
+
+    return ExistingCropFullResponse(
+        primaryCropAdvice=primary_resp,
+        secondaryCropsAdvice=secondary_resp
+    )
+
 
        
 
@@ -526,6 +518,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
