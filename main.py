@@ -84,15 +84,8 @@ class CropLogBlock(BaseModel):
     stage: Optional[str] = None
     activityLogs: Optional[List[dict]] = []
     
-class PestRiskRequest(BaseModel):
-    crops: List[CropLogBlock]
-    district: Optional[str] = None
-    taluk: Optional[str] = None
-    soilType: Optional[str] = None
-    avgTemp: Optional[float] = None
-    humidity: Optional[float] = None
-    rainfall: Optional[float] = None
-    month: Optional[int] = None
+cclass PestRiskRequest(BaseModel):
+    userId: str
     language: Optional[str] = "en"
 
 
@@ -106,13 +99,28 @@ class PestAlert(BaseModel):
     preventive: str
     corrective: str
 
-class CropPestRisk(BaseModel):
+class CropRisk(BaseModel):
     cropName: str
-    alerts: List[PestAlert]
+    stage: Optional[str]
 
 class PestRiskResponse(BaseModel):
-    status: str
-    pestRisks: List[CropPestRisk]
+    alerts: List[PestAlert]
+    
+def get_user_crops(db, user_id: str):
+    crops = {}
+    logs = db.child("Users").child(user_id).child("farmActivityLogs").get() or {}
+
+    for crop_key, activities in logs.items():
+        for _, act in activities.items():
+            name = act.get("cropName")
+            stage = act.get("stage")
+            if name:
+                crops[name.lower()] = stage
+
+    return [
+        {"cropName": k, "stage": v}
+        for k, v in crops.items()
+    ]
 
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
@@ -238,10 +246,21 @@ CROP_NAME_KN = {
 
 class ExistingCropAdvisor:
 
-    def advise(self, logs: list, crop_name: str):
+    def advise(self, logs, crop_name: str | None):
 
-        advice = {
-            "cropName": crop_name,
+        crop = crop_name or "Unknown Crop"
+
+        if not logs:
+            return {
+                "cropName": crop,
+                "cropManagement": ["No activity logs found yet. Please add farm activities."],
+                "nutrientManagement": [],
+                "waterManagement": [],
+                "protectionManagement": [],
+                "harvestMarketing": []
+            }
+
+        rec = {
             "cropManagement": [],
             "nutrientManagement": [],
             "waterManagement": [],
@@ -253,41 +272,44 @@ class ExistingCropAdvisor:
             sub = (log.get("subActivity") or "").lower()
 
             if sub == "soil_preparation":
-                advice["cropManagement"].append(
-                    "Ensure proper soil preparation with good drainage and aeration."
+                rec["cropManagement"].append(
+                    "Soil preparation completed. Ensure proper leveling and drainage."
                 )
 
             elif sub == "sowing_planting":
-                advice["cropManagement"].append(
-                    "Maintain proper spacing and healthy seedlings during planting."
+                rec["cropManagement"].append(
+                    "Crop planted successfully. Maintain recommended spacing."
                 )
 
             elif sub == "nutrient_management":
-                advice["nutrientManagement"].append(
+                rec["nutrientManagement"].append(
                     "Apply fertilizers in split doses as per crop stage."
                 )
 
             elif sub == "water_management":
-                advice["waterManagement"].append(
-                    "Irrigate based on soil moisture; avoid over-irrigation."
+                rec["waterManagement"].append(
+                    "Maintain optimal soil moisture. Avoid water stress."
                 )
 
-            elif sub == "crop_protection":
-                advice["protectionManagement"].append(
-                    "Monitor pests weekly and take early control measures."
+            elif sub == "crop_protection_maintenance":
+                rec["protectionManagement"].append(
+                    "Monitor pests weekly and apply control measures if needed."
                 )
 
-            elif sub == "harvesting":
-                advice["harvestMarketing"].append(
-                    "Harvest at correct maturity and store in dry, ventilated place."
+            elif sub == "harvesting_cut_gather":
+                rec["harvestMarketing"].append(
+                    "Harvest at proper maturity and store in dry conditions."
                 )
 
-        # Safe fallbacks
-        for k in advice:
-            if isinstance(advice[k], list) and not advice[k]:
-                advice[k].append("Follow recommended best practices for this crop.")
+        # Final safety fallback
+        for k in rec:
+            if not rec[k]:
+                rec[k].append("Follow recommended best practices for this crop.")
 
-        return advice
+        return {
+            "cropName": crop,
+            **rec
+        }
 
 def enrich_existing_crop(base_result: dict, lang: str, fallback_crop: str):
     # Always ensure cropName exists
@@ -386,6 +408,22 @@ def normalize_existing_crop(result: dict, crop_name: str) -> dict:
         "estimatedNetProfitPerAcre": result.get("estimatedNetProfitPerAcre")
     }
 
+score = 0.0
+
+if stage in pest["stage"]:
+    score += 0.4
+
+if district in PEST_HISTORY.get(crop, []):
+    score += 0.3
+
+if pest temp & humidity match:
+    score += 0.3
+
+riskLevel = (
+    "High" if score >= 0.7
+    else "Medium" if score >= 0.4
+    else "Low"
+)
 
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
@@ -503,37 +541,44 @@ def new_crop_advice(req: NewCropRequest):
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
 
-    results = []
+    crops = get_user_crops(firebase_db, req.userId)
 
-    for crop in req.crops:
-        alerts = engine.predict(
-            cropName=crop.cropName,
-            district=req.district,
-            taluk=req.taluk,
-            soilType=req.soilType,
-            stage=crop.stage,
-            temp=req.avgTemp,
-            humidity=req.humidity,
-            rainfall=req.rainfall,
-            month_int=req.month,
-            lang=req.language
+    if not crops:
+        return {"alerts": []}
+
+    alerts = []
+
+    for crop in crops:
+        results = engine.predict(
+            cropName=crop["cropName"],
+            stage=crop["stage"],
+            district=None,      # can be enhanced later
+            soilType=None,
+            temp=None,
+            humidity=None,
+            month_int=datetime.now().month
         )
 
-        results.append({
-            "cropName": crop.cropName,
-            "alerts": alerts
-        })
+        for r in results:
+            alerts.append({
+                "cropName": crop["cropName"],
+                "pestName": r["pestName"],
+                "riskLevel": r["riskLevel"],
+                "score": r["score"],
+                "reasons": r["reasons"],
+                "symptoms": r["symptoms"],
+                "preventive": r["preventive"],
+                "corrective": r["corrective"]
+            })
 
-    return {
-        "status": "success",
-        "pestRisks": results
-    }
+    return {"alerts": alerts}
 
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
