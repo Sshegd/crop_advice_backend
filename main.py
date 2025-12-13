@@ -329,53 +329,47 @@ rainfall_range = {
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
 
-@app.post("/advice/existing/full", response_model=ExistingCropResponse)
-def existing_crop_single(req: ExistingRequest):
-    lang = (req.language or "en").lower()
+@app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
+def existing_primary_secondary_advice(req: ExistingCropRequest):
+    try:
+        lang = (req.language or "en").lower()
 
-    # ================= PRIMARY CROP =================
-    primary_result = existing_crop_advisor.advise(
-        req.activityLogs,
-        {
-            **req.farmDetails.dict(),
-            "cropName": req.farmDetails.cropName
-        }
-    )
-
-    primary_result = enrich_existing_crop(
-        primary_result,
-        lang
-    )
-
-    # ================= SECONDARY CROPS =================
-    secondary_results = []
-
-    for sc in req.secondaryCrops:
-        if not sc.activityLogs:
-            continue
-
-        sc_result = existing_crop_advisor.advise(
-            sc.activityLogs,
-            {"cropName": sc.cropName}
+        # ================= PRIMARY CROP =================
+        primary_result = existing_crop_advisor.advise(
+            req.activityLogs,
+            {
+                **req.farmDetails.dict(),
+                "cropName": req.farmDetails.cropName
+            }
         )
 
-        sc_result = enrich_existing_crop(
-            sc_result,
-            lang
+        primary_result = enrich_existing_crop(primary_result, lang)
+
+        # ================= SECONDARY CROPS =================
+        secondary_results = []
+
+        for sc in req.secondaryCrops:
+            if not sc.activityLogs:
+                continue
+
+            sc_result = existing_crop_advisor.advise(
+                sc.activityLogs,
+                {"cropName": sc.cropName}
+            )
+
+            sc_result = enrich_existing_crop(sc_result, lang)
+
+            secondary_results.append(
+                ExistingCropResponse(**sc_result)
+            )
+
+        return ExistingCropFullResponse(
+            primaryCropAdvice=ExistingCropResponse(**primary_result),
+            secondaryCropsAdvice=secondary_results
         )
 
-        secondary_results.append(
-            ExistingCropResponse(**sc_result)
-        )
-
-    return ExistingCropFullResponse(
-        primaryCropAdvice=ExistingCropResponse(**primary_result),
-        secondaryCropsAdvice=secondary_results
-    )
-
-except Exception as e:
-    raise HTTPException(status_code=500, detail=str(e))
-
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
@@ -492,6 +486,7 @@ def pest_risk_multi(req: PestRiskRequest):
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
  
+
 
 
 
