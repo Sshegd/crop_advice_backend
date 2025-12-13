@@ -1,18 +1,12 @@
 # pest_engine.py
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 from datetime import datetime
 
 
 class PestEngine:
     def __init__(self, pest_db: Dict, pest_history: Dict):
-        """
-        Accepts:
-            pest_db      - Full ICAR Karnataka pest knowledge base
-            pest_history - 20-year district outbreak probabilities
-        """
         self.pest_db = pest_db
         self.pest_history = pest_history
-
 
     # -----------------------------
     # INTERNAL HELPERS
@@ -22,7 +16,6 @@ class PestEngine:
             month_int = datetime.utcnow().month
         return datetime(2000, month_int, 1).strftime("%B")
 
-
     def _risk_level(self, score: float) -> str:
         if score >= 0.75:
             return "HIGH"
@@ -30,14 +23,25 @@ class PestEngine:
             return "MEDIUM"
         return "LOW"
 
-
-    def _evaluate_rule(self, rule: Dict, stage, temp, hum, rain, month_name, symptoms_text):
-        """Returns: (score: float, reasons: list[str])"""
+    # -----------------------------
+    # RULE EVALUATION
+    # -----------------------------
+    def _evaluate_rule(
+        self,
+        rule: Dict,
+        stage: Optional[str],
+        temp: Optional[float],
+        hum: Optional[float],
+        rain: Optional[float],
+        month_name: str,
+        soilType: Optional[str],
+        symptoms_text: Optional[str],
+    ):
         reasons = []
         matched = 0
         total = 0
 
-        # temperature
+        # 🌡 Temperature
         if "temp_gt" in rule and temp is not None:
             total += 1
             if temp > rule["temp_gt"]:
@@ -49,64 +53,70 @@ class PestEngine:
             lo, hi = rule["temp_range"]
             if lo <= temp <= hi:
                 matched += 1
-                reasons.append(f"Temperature {temp} in {lo}-{hi}")
+                reasons.append(f"Temperature {temp} in range {lo}-{hi}")
 
-        # humidity
+        # 💧 Humidity
         if "humidity_gt" in rule and hum is not None:
             total += 1
             if hum > rule["humidity_gt"]:
                 matched += 1
-                reasons.append(f"Humidity {hum} > {rule['humidity_gt']}")
+                reasons.append(f"Humidity {hum}% > {rule['humidity_gt']}%")
 
         if "humidity_lt" in rule and hum is not None:
             total += 1
             if hum < rule["humidity_lt"]:
                 matched += 1
-                reasons.append(f"Humidity {hum} < {rule['humidity_lt']}")
+                reasons.append(f"Humidity {hum}% < {rule['humidity_lt']}%")
 
-        # rainfall
+        # 🌧 Rainfall
         if "rainfall_gt" in rule and rain is not None:
             total += 1
             if rain > rule["rainfall_gt"]:
                 matched += 1
-                reasons.append(f"Rainfall {rain} > {rule['rainfall_gt']}")
+                reasons.append(f"Rainfall {rain}mm > {rule['rainfall_gt']}mm")
 
         if "rainfall_lt" in rule and rain is not None:
             total += 1
             if rain < rule["rainfall_lt"]:
                 matched += 1
-                reasons.append(f"Rainfall {rain} < {rule['rainfall_lt']}")
+                reasons.append(f"Rainfall {rain}mm < {rule['rainfall_lt']}mm")
 
-        # season
+        # 🗓 Season
         if "season" in rule:
             total += 1
             if month_name in rule["season"]:
                 matched += 1
                 reasons.append(f"Season: {month_name}")
 
-        # stage of crop
+        # 🌱 Crop stage
         if "stage" in rule and stage:
             total += 1
             if stage in rule["stage"]:
                 matched += 1
                 reasons.append(f"Crop stage: {stage}")
 
-        # symptoms boost
-        score = matched / total if total > 0 else 0
+        # 🌍 Soil type (IMPORTANT FIX)
+        if "soil" in rule and soilType:
+            total += 1
+            if soilType in rule["soil"]:
+                matched += 1
+                reasons.append(f"Soil matched: {soilType}")
 
+        # 📊 Base score
+        score = matched / total if total > 0 else 0.0
+
+        # 📝 Symptom text boost (optional)
         if symptoms_text:
             symptom_words = rule.get("symptoms", "").lower().split()
             text = symptoms_text.lower()
-
             if any(word in text for word in symptom_words):
-                score = min(1.0, score + 0.20)  # 20% confidence boost
-                reasons.append("Farmer symptom text suggests relevance")
+                score = min(1.0, score + 0.20)
+                reasons.append("Farmer-reported symptoms match")
 
         return score, reasons
 
-
     # -----------------------------
-    # MAIN API ENGINE
+    # MAIN PREDICTION ENGINE
     # -----------------------------
     def predict(
         self,
@@ -122,6 +132,10 @@ class PestEngine:
         lang: str = "en",
     ):
         crop = cropName.lower().strip()
+        district = district.lower().strip() if district else None
+        soilType = soilType.lower().strip() if soilType else None
+        stage = stage.lower().strip() if stage else None
+
         month_name = self._month_name(month_int)
 
         if crop not in self.pest_db:
@@ -129,7 +143,6 @@ class PestEngine:
 
         alerts = []
 
-        # 1. Loop pests for this crop
         for pest_name, rule in self.pest_db[crop].items():
             score, reasons = self._evaluate_rule(
                 rule,
@@ -138,27 +151,25 @@ class PestEngine:
                 humidity,
                 rainfall,
                 month_name,
-                None   # symptoms text not needed here
+                soilType,
+                None,
             )
 
-            # 2. Add district outbreak history boost
-            if district in self.pest_history and crop in self.pest_history[district]:
-                if pest_name in self.pest_history[district][crop]:
-                    historical_risk = self.pest_history[district][crop][pest_name]
-                    score = min(1.0, score + historical_risk * 0.25)
-                    reasons.append(f"Historical outbreak risk: {historical_risk}")
+            # 📍 District history boost
+            if (
+                district
+                and district in self.pest_history
+                and crop in self.pest_history[district]
+                and pest_name in self.pest_history[district][crop]
+            ):
+                historical = self.pest_history[district][crop][pest_name]["risk_level"]
+                boost = {"LOW": 0.10, "MEDIUM": 0.20, "HIGH": 0.30}.get(historical, 0)
+                score = min(1.0, score + boost)
+                reasons.append(f"Historical risk in {district}: {historical}")
 
-            if score < 0.45:  
+            # ⚠ Lower threshold for early warning
+            if score < 0.30:
                 continue
-
-            # 3. Prepare alert
-            risk_level = self._risk_level(score)
-
-            symptoms = rule.get("symptoms", "")
-            preventive = rule.get("preventive", "")
-            corrective = rule.get("corrective", "")
-
-        
 
             alerts.append({
                 "cropName": cropName,
@@ -166,11 +177,22 @@ class PestEngine:
                 "riskLevel": self._risk_level(score),
                 "score": round(score, 2),
                 "reasons": reasons,
-                "symptoms": rule.get("symptoms", []),
-                "preventive": rule.get("preventive", []),
-                "corrective": rule.get("corrective", [])
+                "symptoms": rule.get("symptoms", ""),
+                "preventive": rule.get("preventive", ""),
+                "corrective": rule.get("corrective", ""),
             })
 
+        # 🟢 Fallback (important UX)
+        if not alerts:
+            return [{
+                "cropName": cropName,
+                "pestName": "No major pest outbreak detected",
+                "riskLevel": "LOW",
+                "score": 0.2,
+                "reasons": ["Current conditions are not favorable for major pests"],
+                "symptoms": "",
+                "preventive": "Continue regular field monitoring and sanitation.",
+                "corrective": ""
+            }]
 
         return alerts
-
