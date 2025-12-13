@@ -315,24 +315,7 @@ rainfall_range = {
 
 
 
-score = 0.0
 
-if stage in pest["stage"]:
-    score += 0.4
-
-if district in PEST_HISTORY.get(crop, []):
-    score += 0.3
-
-if temp >= rule["temp_range"][0] and temp <= rule["temp_range"][1] \
-        and humidity >= rule.get("humidity_gt", 0):
-    score += 0.2
-
-
-riskLevel = (
-    "High" if score >= 0.7
-    else "Medium" if score >= 0.4
-    else "Low"
-)
 
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
@@ -496,6 +479,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
