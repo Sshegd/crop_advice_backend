@@ -1,136 +1,195 @@
 # pest_engine.py
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
+from firebase_admin import db
 
 
 class PestEngine:
-
-    def __init__(self, pest_db: Dict, pest_history: Dict):
+    def __init__(self, pest_db: Dict, pest_history: Dict, firebase_db):
+        """
+        pest_db       → Rule-based pest knowledge
+        pest_history  → District-wise historical risk
+        firebase_db   → firebase_admin.db
+        """
         self.pest_db = pest_db
         self.pest_history = pest_history
+        self.firebase_db = firebase_db
 
-    # -----------------------------
+    # --------------------------------------------------
+    # FIREBASE DATA FETCH
+    # --------------------------------------------------
+
+    def _get_user_farm_data(self, user_id: str):
+        ref = self.firebase_db.reference(f"Users/{user_id}")
+        user = ref.get()
+
+        if not user:
+            return None
+
+        farm = user.get("farmDetails", {})
+        primary_logs = user.get("farmActivityLogs", {})
+        secondary = user.get("secondaryCrops", {})
+
+        crops = []
+
+        # PRIMARY CROP
+        if farm.get("cropName"):
+            crops.append({
+                "cropName": farm.get("cropName"),
+                "activityLogs": list(primary_logs.values())
+            })
+
+        # SECONDARY CROPS
+        for crop_name, data in secondary.items():
+            crops.append({
+                "cropName": crop_name,
+                "activityLogs": list(data.get("activityLogs", {}).values())
+            })
+
+        return {
+            "district": farm.get("district"),
+            "soilType": farm.get("soilType"),
+            "crops": crops
+        }
+
+    # --------------------------------------------------
     # HELPERS
-    # -----------------------------
+    # --------------------------------------------------
+
+    def _extract_latest_stage(self, logs: List[dict]) -> Optional[str]:
+        if not logs:
+            return None
+
+        latest = sorted(
+            logs,
+            key=lambda x: x.get("timestamp", 0),
+            reverse=True
+        )[0]
+
+        return latest.get("stage")
+
     def _month_name(self, month_int: Optional[int]) -> str:
         if not month_int:
-            month_int = datetime.utcnow().month
+            month_int = datetime.now().month
         return datetime(2000, month_int, 1).strftime("%B")
 
     def _risk_level(self, score: float) -> str:
-        if score >= 0.7:
+        if score >= 0.75:
             return "HIGH"
-        if score >= 0.4:
+        if score >= 0.45:
             return "MEDIUM"
         return "LOW"
 
-    def _history_score(self, level: Optional[str]) -> float:
-        return {
-            "HIGH": 0.6,
-            "MEDIUM": 0.4,
-            "LOW": 0.2
-        }.get(level, 0.0)
+    # --------------------------------------------------
+    # RULE EVALUATION
+    # --------------------------------------------------
 
-    # -----------------------------
-    # MAIN ENGINE
-    # -----------------------------
-    def predict(
+    def _evaluate_rule(
         self,
-        cropName: str,
-        district: str = None,
-        soilType: str = None,
-        stage: str = None,
-        temp: float = None,
-        humidity: float = None,
-        rainfall: float = None,
-        month_int: int = None,
-        lang: str = "en"
+        rule: Dict,
+        stage: Optional[str],
+        temp: Optional[float],
+        humidity: Optional[float],
+        rainfall: Optional[float],
+        month_name: str
     ):
+        matched = 0
+        total = 0
+        reasons = []
 
-        if not cropName:
+        if "temp_range" in rule and temp is not None:
+            total += 1
+            lo, hi = rule["temp_range"]
+            if lo <= temp <= hi:
+                matched += 1
+                reasons.append(f"Temperature {temp}°C suitable")
+
+        if "humidity_gt" in rule and humidity is not None:
+            total += 1
+            if humidity > rule["humidity_gt"]:
+                matched += 1
+                reasons.append(f"High humidity {humidity}%")
+
+        if "rainfall_gt" in rule and rainfall is not None:
+            total += 1
+            if rainfall > rule["rainfall_gt"]:
+                matched += 1
+                reasons.append("Heavy rainfall conditions")
+
+        if "season" in rule:
+            total += 1
+            if month_name in rule["season"]:
+                matched += 1
+                reasons.append(f"Season: {month_name}")
+
+        if "stage" in rule and stage:
+            total += 1
+            if stage in rule["stage"]:
+                matched += 1
+                reasons.append(f"Crop stage: {stage}")
+
+        score = matched / total if total else 0
+        return score, reasons
+
+    # --------------------------------------------------
+    # MAIN PEST PREDICTION (FULL AUTO)
+    # --------------------------------------------------
+
+    def predict_for_user(
+        self,
+        user_id: str,
+        temp: Optional[float] = None,
+        humidity: Optional[float] = None,
+        rainfall: Optional[float] = None,
+        month_int: Optional[int] = None,
+        lang: str = "en"
+    ) -> List[dict]:
+
+        data = self._get_user_farm_data(user_id)
+        if not data:
             return []
 
-        crop = cropName.lower().strip()
-        district = (district or "").lower().strip()
-        soilType = (soilType or "").lower().strip()
-        stage = (stage or "").lower().strip()
-
-        # SAFE DEFAULTS (CRITICAL)
-        temp = temp if temp is not None else 28
-        humidity = humidity if humidity is not None else 70
-        rainfall = rainfall if rainfall is not None else 900
-
+        district = (data["district"] or "").lower()
+        soil = (data["soilType"] or "").lower()
         month_name = self._month_name(month_int)
-
-        if crop not in self.pest_db:
-            return []
 
         alerts = []
 
-        for pest_name, rule in self.pest_db[crop].items():
+        for crop in data["crops"]:
+            crop_name = crop["cropName"]
+            crop_key = crop_name.lower().strip()
+            stage = self._extract_latest_stage(crop["activityLogs"])
 
-            score = 0.3   # ⭐ BASE RISK (VERY IMPORTANT)
-            reasons = ["General pest risk for this crop"]
+            if crop_key not in self.pest_db:
+                continue
 
-            # TEMP
-            if "temp_range" in rule:
-                lo, hi = rule["temp_range"]
-                if lo <= temp <= hi:
-                    score += 0.15
-                    reasons.append(f"Temperature favorable ({temp}°C)")
-
-            # HUMIDITY
-            if "humidity_gt" in rule and humidity >= rule["humidity_gt"]:
-                score += 0.15
-                reasons.append(f"High humidity ({humidity}%)")
-
-            # RAINFALL
-            if "rainfall_range" in rule:
-                lo, hi = rule["rainfall_range"]
-                if lo <= rainfall <= hi:
-                    score += 0.10
-                    reasons.append("Rainfall supports pest spread")
-
-            # SEASON
-            if "season" in rule and month_name in rule["season"]:
-                score += 0.15
-                reasons.append(f"Seasonal occurrence ({month_name})")
-
-            # STAGE (do NOT penalize if unknown)
-            if "stage" in rule:
-                if not stage or stage in rule["stage"]:
-                    score += 0.10
-                    reasons.append("Crop stage susceptible")
-
-            # SOIL
-            if "soil" in rule:
-                if not soilType or soilType in rule["soil"]:
-                    score += 0.05
-
-            # DISTRICT HISTORY (VERY IMPORTANT)
-            if (
-                district in self.pest_history and
-                crop in self.pest_history[district] and
-                pest_name in self.pest_history[district][crop]
-            ):
-                hist = self.pest_history[district][crop][pest_name]
-                hist_score = self._history_score(hist.get("risk_level"))
-                score += hist_score
-                reasons.append(
-                    f"Historical outbreaks in {district} ({hist.get('risk_level')})"
+            for pest_name, rule in self.pest_db[crop_key].items():
+                score, reasons = self._evaluate_rule(
+                    rule, stage, temp, humidity, rainfall, month_name
                 )
 
-            score = min(score, 1.0)
+                # DISTRICT HISTORY BOOST
+                if (
+                    district in self.pest_history and
+                    crop_key in self.pest_history[district] and
+                    pest_name in self.pest_history[district][crop_key]
+                ):
+                    hist = self.pest_history[district][crop_key][pest_name]
+                    score = min(1.0, score + hist * 0.25)
+                    reasons.append("Historical outbreak in district")
 
-            alerts.append({
-                "cropName": cropName,
-                "pestName": pest_name,
-                "riskLevel": self._risk_level(score),
-                "score": round(score, 2),
-                "reasons": reasons,
-                "symptoms": rule.get("symptoms", ""),
-                "preventive": rule.get("preventive", ""),
-                "corrective": rule.get("corrective", "")
-            })
+                if score < 0.45:
+                    continue
+
+                alerts.append({
+                    "cropName": crop_name,
+                    "pestName": pest_name,
+                    "riskLevel": self._risk_level(score),
+                    "score": round(score, 2),
+                    "reasons": reasons,
+                    "symptoms": rule.get("symptoms", ""),
+                    "preventive": rule.get("preventive", ""),
+                    "corrective": rule.get("corrective", "")
+                })
 
         return alerts
