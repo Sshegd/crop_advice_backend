@@ -171,43 +171,9 @@ class NewCropAdvisor:
 
 class ExistingCropAdvisor:
 
-    def __init__(self):
-        self.model = None
-        if os.path.exists("existing_crop_advice_model.pkl"):
-            self.model = joblib.load("existing_crop_advice_model.pkl")
-
     def advise(self, logs, crop_name: str | None):
 
         crop = crop_name or "Unknown Crop"
-
-        # -------- RULE FALLBACK (NO LOGS) --------
-        if not logs:
-            return {
-                "cropName": crop,
-                "cropManagement": ["Add farm activities to receive personalized advice."],
-                "nutrientManagement": [],
-                "waterManagement": [],
-                "protectionManagement": [],
-                "harvestMarketing": []
-            }
-
-        # -------- FEATURE EXTRACTION --------
-        f = extract_features(logs, crop)
-
-        X = [[
-            f["soil_preparation"],
-            f["sowing"],
-            f["nutrient"],
-            f["water"],
-            f["protection"],
-            f["harvest"]
-        ]]
-
-        # -------- ML PREDICTION --------
-        if self.model:
-            preds = self.model.predict(X)[0]
-        else:
-            preds = [1,1,1,1,1]   # safe fallback
 
         rec = {
             "cropManagement": [],
@@ -217,26 +183,63 @@ class ExistingCropAdvisor:
             "harvestMarketing": []
         }
 
-        if preds[0]:
+        if not logs:
             rec["cropManagement"].append(
-                f"Based on your field activities for {crop}, continue proper crop management practices."
+                f"Add farm activities for {crop} to receive personalized advice."
             )
-        if preds[1]:
-            rec["nutrientManagement"].append(
-                "Apply fertilizers in split doses according to crop stage and soil test."
-            )
-        if preds[2]:
-            rec["waterManagement"].append(
-                "Maintain optimum soil moisture; avoid water stress."
-            )
-        if preds[3]:
-            rec["protectionManagement"].append(
-                "Monitor pests and diseases regularly and apply control measures early."
-            )
-        if preds[4]:
-            rec["harvestMarketing"].append(
-                "Plan harvest at physiological maturity and monitor local market prices."
-            )
+            return {
+                "cropName": crop,
+                **rec
+            }
+
+        for log in logs:
+            sub = (log.get("subActivity") or "").lower()
+
+            # 🌱 SOIL PREPARATION
+            if sub == "soil_preparation":
+                rec["cropManagement"].append(
+                    "Soil preparation completed. Ensure proper leveling and drainage."
+                )
+
+            # 🌾 SOWING / PLANTING
+            elif sub == "sowing_planting":
+                rec["cropManagement"].append(
+                    "Crop planted successfully. Maintain recommended spacing."
+                )
+
+            # 💧 WATER MANAGEMENT  ✅ YOUR CODE HERE
+            elif sub == "water_management":
+                freq = log.get("frequencyDays", 3)
+                rec["waterManagement"].append(
+                    f"Irrigate every {freq} days. Avoid water stress during flowering stage."
+                )
+
+            # 🧪 NUTRIENT MANAGEMENT ✅ YOUR CODE HERE
+            elif sub == "nutrient_management":
+                for app in log.get("applications", []):
+                    rec["nutrientManagement"].append(
+                        f"Applied {app.get('fertilizerName')} ({app.get('quantity')}). "
+                        f"Next dose after {app.get('gapDays')} days."
+                    )
+
+            # 🛡 CROP PROTECTION ✅ YOUR CODE HERE
+            elif sub == "crop_protection_maintenance":
+                rec["protectionManagement"].append(
+                    "Regular scouting done. Continue weekly pest monitoring."
+                )
+
+            # 🌾 HARVESTING ✅ YOUR CODE HERE
+            elif sub == "harvesting_cut_gather":
+                rec["harvestMarketing"].append(
+                    "Harvest completed. Ensure proper drying and grading before sale."
+                )
+
+        # ---- SAFETY FALLBACKS (only if empty) ----
+        for key in rec:
+            if not rec[key]:
+                rec[key].append(
+                    f"Based on current stage of {crop}, follow recommended best practices."
+                )
 
         return {
             "cropName": crop,
