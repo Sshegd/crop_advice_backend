@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 import os
 import numpy as np
 import joblib
+from ml_features import extract_features
 
 
 # ----------------- Helper data for new crop advisory -----------------
@@ -168,12 +169,45 @@ class NewCropAdvisor:
 
 # ----------------- Existing crop advisor (Firebase logs) -----------------
 
-
 class ExistingCropAdvisor:
+
+    def __init__(self):
+        self.model = None
+        if os.path.exists("existing_crop_advice_model.pkl"):
+            self.model = joblib.load("existing_crop_advice_model.pkl")
 
     def advise(self, logs, crop_name: str | None):
 
         crop = crop_name or "Unknown Crop"
+
+        # -------- RULE FALLBACK (NO LOGS) --------
+        if not logs:
+            return {
+                "cropName": crop,
+                "cropManagement": ["Add farm activities to receive personalized advice."],
+                "nutrientManagement": [],
+                "waterManagement": [],
+                "protectionManagement": [],
+                "harvestMarketing": []
+            }
+
+        # -------- FEATURE EXTRACTION --------
+        f = extract_features(logs, crop)
+
+        X = [[
+            f["soil_preparation"],
+            f["sowing"],
+            f["nutrient"],
+            f["water"],
+            f["protection"],
+            f["harvest"]
+        ]]
+
+        # -------- ML PREDICTION --------
+        if self.model:
+            preds = self.model.predict(X)[0]
+        else:
+            preds = [1,1,1,1,1]   # safe fallback
 
         rec = {
             "cropManagement": [],
@@ -183,76 +217,25 @@ class ExistingCropAdvisor:
             "harvestMarketing": []
         }
 
-        if not logs:
+        if preds[0]:
             rec["cropManagement"].append(
-                f"No activity logs found for {crop}. "
-                f"Start by updating soil preparation or sowing details."
+                f"Based on your field activities for {crop}, continue proper crop management practices."
             )
-            return {"cropName": crop, **rec}
-
-        last_stage = None
-
-        for log in logs:
-
-            sub = (log.get("subActivity") or "").strip().lower()
-            stage = (log.get("stage") or "").lower()
-            last_stage = stage or last_stage
-
-            # 🌱 SOIL PREPARATION
-            if "soil" in sub:
-                rec["cropManagement"].append(
-                    "Soil preparation completed. Ensure good drainage and fine tilth."
-                )
-
-            # 🌾 SOWING / PLANTING
-            elif "sowing" in sub or "planting" in sub:
-                rec["cropManagement"].append(
-                    "Crop has been planted. Maintain recommended spacing and avoid water stress in early days."
-                )
-
-            # 🧪 NUTRIENT
-            elif "nutrient" in sub or "fertilizer" in sub:
-                rec["nutrientManagement"].append(
-                    "Apply fertilizers in split doses according to crop stage. Avoid excess nitrogen."
-                )
-
-            # 💧 WATER
-            elif "water" in sub or "irrigation" in sub:
-                rec["waterManagement"].append(
-                    "Irrigate based on soil moisture. Avoid waterlogging and moisture stress."
-                )
-
-            # 🛡 PEST / DISEASE
-            elif "protection" in sub or "pest" in sub:
-                rec["protectionManagement"].append(
-                    "Continue weekly pest monitoring. Use recommended pesticide only if threshold is crossed."
-                )
-
-            # 🌾 HARVEST
-            elif "harvest" in sub:
-                rec["harvestMarketing"].append(
-                    "Harvest at proper maturity. Dry produce properly before storage."
-                )
-
-        # ---------------- SMART NEXT ACTION ----------------
-        if not rec["nutrientManagement"] and last_stage in ["vegetative", "flowering"]:
+        if preds[1]:
             rec["nutrientManagement"].append(
-                "Next step: Apply stage-specific NPK fertilizer to support growth."
+                "Apply fertilizers in split doses according to crop stage and soil test."
             )
-
-        if not rec["waterManagement"]:
+        if preds[2]:
             rec["waterManagement"].append(
-                "Next step: Schedule irrigation based on weather and soil moisture."
+                "Maintain optimum soil moisture; avoid water stress."
             )
-
-        if not rec["protectionManagement"]:
+        if preds[3]:
             rec["protectionManagement"].append(
-                "Next step: Inspect leaves and stem for early pest or disease symptoms."
+                "Monitor pests and diseases regularly and apply control measures early."
             )
-
-        if not rec["harvestMarketing"] and last_stage == "maturity":
+        if preds[4]:
             rec["harvestMarketing"].append(
-                "Prepare for harvesting and identify nearby market prices."
+                "Plan harvest at physiological maturity and monitor local market prices."
             )
 
         return {
