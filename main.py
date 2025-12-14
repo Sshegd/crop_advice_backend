@@ -210,6 +210,12 @@ def get_user_crops(firebase_db, user_id: str):
 
     return crops
 
+def extract_crop_name(logs, fallback="Unknown Crop"):
+    for log in logs:
+        name = log.get("cropName")
+        if name:
+            return name.title()
+    return fallback
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
 # ====== MARKET PRICE (Karnataka Avg ₹/Quintal 2024–25) ======
@@ -409,6 +415,34 @@ rainfall_range = {
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
 
+    # ---------- PRIMARY ----------
+    primary_crop_name = extract_crop_name(req.activityLogs)
+    primary_result = existing_crop_advisor.advise(
+        req.activityLogs,
+        primary_crop_name
+    )
+    primary_resp = ExistingCropResponse(**primary_result)
+
+    # ---------- SECONDARY ----------
+    secondary_responses = []
+
+    for sc in req.secondaryCrops:
+        sc_name = extract_crop_name(sc.activityLogs, sc.cropName)
+        sc_result = existing_crop_advisor.advise(
+            sc.activityLogs,
+            sc_name
+        )
+        secondary_responses.append(
+            ExistingCropResponse(**sc_result)
+        )
+
+    return ExistingCropFullResponse(
+        primaryCropAdvice=primary_resp,
+        secondaryCropsAdvice=secondary_responses
+    )
+@app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
+def existing_crop_advice(req: ExistingCropRequest):
+
     # PRIMARY
     primary_advice = generate_advice(req.activityLogs)
 
@@ -562,6 +596,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
