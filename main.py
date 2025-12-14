@@ -13,31 +13,28 @@ from district_pest_history import PEST_HISTORY
 from typing import List
 from firebase_admin import credentials, db
 
-
-app = FastAPI(title="Crop Advisory Backend")
-
-
-firebase_credentials = json.loads(
-    os.environ["FIREBASE_CREDENTIALS"]
-)
+firebase_credentials = json.loads(os.environ["FIREBASE_CREDENTIALS"])
+firebase_db_url = os.environ["FIREBASE_DB_URL"]
 
 cred = credentials.Certificate(firebase_credentials)
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app(
         cred,
-        {
-            "databaseURL": os.environ["FIREBASE_DB_URL"]
-        }
+        {"databaseURL": firebase_db_url}
     )
 
 firebase_db = db
 
-
+app = FastAPI(title="Crop Advisory Backend")
 
 new_crop_advisor = NewCropAdvisor()
 advisor = ExistingCropAdvisor()
-engine = PestEngine(PEST_DB, PEST_HISTORY)
+pest_engine = PestEngine(
+    pest_db=PEST_DB,
+    pest_history=PEST_HISTORY,
+    firebase_db=firebase_db
+)
 
 
 
@@ -105,15 +102,10 @@ class NewCropResponse(BaseModel):
     recommendations: List[NewCropAdvice]
 
 
-class CropLogBlock(BaseModel):
-    cropName: str
-    stage: Optional[str] = None
-    activityLogs: Optional[List[dict]] = []
-    
 class PestRiskRequest(BaseModel):
     userId: str
     language: Optional[str] = "en"
-
+    
 
 class PestAlert(BaseModel):
     cropName: str
@@ -124,10 +116,6 @@ class PestAlert(BaseModel):
     symptoms: str
     preventive: str
     corrective: str
-
-class CropRisk(BaseModel):
-    cropName: str
-    stage: Optional[str]
 
 class PestRiskResponse(BaseModel):
     alerts: List[PestAlert]
@@ -462,62 +450,42 @@ def new_crop_advice(req: NewCropRequest):
 
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
+    """
+    Android sends:
+    {
+      "userId": "...",
+      "language": "en"
+    }
 
-    # 1️⃣ Fetch crops of logged-in user from Firebase
-    crops = get_user_crops(firebase_db, req.userId)
+    Backend:
+    - Fetches crops from Firebase
+    - Applies pest rules + district history
+    """
 
-    if not crops:
-        return {"alerts": []}
-
-    alerts = []
-
-    for crop in crops:
-
-        crop_name = crop.get("cropName")
-        logs = crop.get("activityLogs", [])
-
-        # 2️⃣ Extract latest stage from logs (SAFE)
-        stage = None
-        if logs:
-            latest = sorted(
-                logs,
-                key=lambda x: x.get("timestamp", 0),
-                reverse=True
-            )[0]
-            stage = latest.get("stage")
-
-        # 3️⃣ Fetch farm details (district / soil)
-        user_ref = firebase_db.reference(f"Users/{req.userId}")
-        user = user_ref.get() or {}
-        farm = user.get("farmDetails", {})
-
-        district = farm.get("district")
-        soilType = farm.get("soilType")
-
-        # 4️⃣ Run pest engine
-        results = engine.predict(
-            cropName=crop_name,
-            stage=stage,
-            district=district,
-            soilType=soilType,
-            temp=None,
-            humidity=None,
-            rainfall=None,
+    try:
+        alerts = pest_engine.predict_for_user(
+            user_id=req.userId,
             month_int=datetime.now().month,
             lang=req.language
         )
 
-        # 5️⃣ Collect alerts
-        for r in results:
-            alerts.append(PestAlert(**r))
+        return {"alerts": alerts}
 
-    return {"alerts": alerts}
+    except Exception as e:
+        print("❌ PEST ERROR:", e)
+        raise HTTPException(status_code=500, detail="Pest detection failed")
+
+
+# =====================================================
+# ✅ HEALTH CHECK
+# =====================================================
 
 @app.get("/")
 def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
