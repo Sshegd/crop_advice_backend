@@ -171,11 +171,10 @@ class NewCropAdvisor:
 
 class ExistingCropAdvisor:
 
-    def advise(self, logs, crop_name: str | None):
-
-        crop = crop_name or "Unknown Crop"
+    def advise(self, activity_logs: list, crop_name: str):
 
         rec = {
+            "cropName": crop_name,
             "cropManagement": [],
             "nutrientManagement": [],
             "waterManagement": [],
@@ -183,65 +182,42 @@ class ExistingCropAdvisor:
             "harvestMarketing": []
         }
 
-        if not logs:
+        if not activity_logs:
             rec["cropManagement"].append(
-                f"Add farm activities for {crop} to receive personalized advice."
+                "Add farm activities to receive personalized advice."
             )
-            return {
-                "cropName": crop,
-                **rec
-            }
+            return rec
 
-        for log in logs:
-            sub = (log.get("subActivity") or "").lower()
+        for log in activity_logs:
+            sub = log.get("subActivity")
 
-            # 🌱 SOIL PREPARATION
-            if sub == "soil_preparation":
-                rec["cropManagement"].append(
-                    "Soil preparation completed. Ensure proper leveling and drainage."
-                )
-
-            # 🌾 SOWING / PLANTING
-            elif sub == "sowing_planting":
-                rec["cropManagement"].append(
-                    "Crop planted successfully. Maintain recommended spacing."
-                )
-
-            # 💧 WATER MANAGEMENT  ✅ YOUR CODE HERE
-            elif sub == "water_management":
+            if sub == "water_management":
                 freq = log.get("frequencyDays", 3)
                 rec["waterManagement"].append(
-                    f"Irrigate every {freq} days. Avoid water stress during flowering stage."
+                    f"Irrigate every {freq} days. Avoid water stress."
                 )
 
-            # 🧪 NUTRIENT MANAGEMENT ✅ YOUR CODE HERE
             elif sub == "nutrient_management":
                 for app in log.get("applications", []):
                     rec["nutrientManagement"].append(
-                        f"Applied {app.get('fertilizerName')} ({app.get('quantity')}). "
-                        f"Next dose after {app.get('gapDays')} days."
+                        f"Applied {app['fertilizerName']} ({app['quantity']}). "
+                        f"Next dose after {app['gapDays']} days."
                     )
 
-            # 🛡 CROP PROTECTION ✅ YOUR CODE HERE
             elif sub == "crop_protection_maintenance":
                 rec["protectionManagement"].append(
-                    "Regular scouting done. Continue weekly pest monitoring."
+                    "Continue weekly pest and disease monitoring."
                 )
 
-            # 🌾 HARVESTING ✅ YOUR CODE HERE
             elif sub == "harvesting_cut_gather":
                 rec["harvestMarketing"].append(
-                    "Harvest completed. Ensure proper drying and grading before sale."
+                    "Harvest at maturity. Dry, grade and store properly."
                 )
 
-        # ---- SAFETY FALLBACKS (only if empty) ----
-        for key in rec:
-            if not rec[key]:
-                rec[key].append(
-                    f"Based on current stage of {crop}, follow recommended best practices."
-                )
+        # fallback
+        if not any(rec[k] for k in rec if k != "cropName"):
+            rec["cropManagement"].append(
+                "Follow standard crop management practices."
+            )
 
-        return {
-            "cropName": crop,
-            **rec
-        }
+        return rec
