@@ -33,11 +33,7 @@ app = FastAPI(title="KrishiSakhi Crop Advisory")
 
 new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
-engine = PestEngine(
-    pest_db=PEST_DB,
-    district_history=PEST_HISTORY
-)
-
+pest_engine = PestEngine(PEST_DB, PEST_HISTORY)
 yield_predictor = YieldPredictor()
 
 
@@ -47,6 +43,7 @@ class FarmDetails(BaseModel):
     district: Optional[str] = None
     taluk: Optional[str] = None
     soilType: Optional[str] = None
+    farmSizeAcre: Optional[float] = 1.0
 
 class SecondaryCropModel(BaseModel):
     cropName: str
@@ -68,57 +65,13 @@ class ExistingCropResponse(BaseModel):
     waterManagement: List[str]
     protectionManagement: List[str]
     harvestMarketing: List[str]
-    marketPrice: Optional[str] = None
-    estimatedNetProfitPerAcre: Optional[str] = None
 
 
 class ExistingCropFullResponse(BaseModel):
     primaryCropAdvice: ExistingCropResponse
     secondaryCropsAdvice: List[ExistingCropResponse]
-# --------------------------------------------------
-# ML-LIKE ADVISOR (Lightweight but smart)
-# --------------------------------------------------
-def infer_crop_name(logs: List[Dict]) -> str:
-    for l in logs:
-        if "cropName" in l:
-            return l["cropName"].title()
-    return "Unknown Crop"
-    
-def stage_based_advice(stage: str, crop: str) -> Dict[str, List[str]]:
-    return {
-        "cropManagement": [f"{crop}: Continue proper field operations at {stage} stage."],
-        "nutrientManagement": [f"Apply nutrients suitable for {stage} stage."],
-        "waterManagement": [f"Maintain soil moisture for {stage} stage."],
-        "protectionManagement": [f"Monitor pests during {stage} stage."],
-        "harvestMarketing": [f"Plan harvest & market linkage early."]
-    }
 
-def generate_advice(logs: List[Dict]) -> Dict:
-    crop = infer_crop_name(logs)
-    stages = set(l.get("stage") for l in logs if l.get("stage"))
 
-    advice = {
-        "cropName": crop,
-        "cropManagement": [],
-        "nutrientManagement": [],
-        "waterManagement": [],
-        "protectionManagement": [],
-        "harvestMarketing": []
-    }
-
-    if not stages:
-        advice["cropManagement"].append(
-            "Add farm activities to receive personalized advice."
-        )
-        return advice
-
-    for stage in stages:
-        a = stage_based_advice(stage, crop)
-        for k in advice:
-            if k != "cropName":
-                advice[k].extend(a[k])
-
-    return advice
 
 class NewCropRequest(BaseModel):
     district: str
@@ -149,7 +102,7 @@ class NewCropResponse(BaseModel):
 
 class PestRiskRequest(BaseModel):
     userId: str
-    language: Optional[str] = "en"
+    
     
 
 class PestAlert(BaseModel):
@@ -172,7 +125,7 @@ class YieldPredictionRequest(BaseModel):
     farmSizeAcre: float
     avgRainfall: float
     avgTemp: float
-    language: Optional[str] = "en"
+
 
 
 class YieldPredictionResponse(BaseModel):
@@ -208,20 +161,6 @@ def get_user_crops(user_id: str):
 
     return crops
 
-# ---------------- 
-def extract_crop_name(activity_logs: dict) -> str:
-    """
-    Extract cropName from any activity log safely
-    """
-    if not activity_logs:
-        return "Unknown Crop"
-
-    for _, log in activity_logs.items():
-        name = log.get("cropName")
-        if name:
-            return name.title()
-
-    return "Unknown Crop"
 
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
@@ -422,59 +361,33 @@ rainfall_range = {
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
 
-    # ---------- PRIMARY ----------
-    primary_crop_name = extract_crop_name(req.activityLogs)
-    primary_result = existing_crop_advisor.advise(
-        req.activityLogs,
-        primary_crop_name
-    )
-    primary_resp = ExistingCropResponse(**primary_result)
-
-    # ---------- SECONDARY ----------
-    secondary_responses = []
-
-    for sc in req.secondaryCrops:
-        sc_name = extract_crop_name(sc.activityLogs, sc.cropName)
-        sc_result = existing_crop_advisor.advise(
-            sc.activityLogs,
-            sc_name
-        )
-        secondary_responses.append(
-            ExistingCropResponse(**sc_result)
-        )
-
-    return ExistingCropFullResponse(
-        primaryCropAdvice=primary_resp,
-        secondaryCropsAdvice=secondary_responses
-    )
-
-
-@app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
-def existing_crop_advice(req: ExistingCropRequest):
-
-    # ---------- PRIMARY CROP ----------
-    primary_crop_name = extract_crop_name(
-        {str(i): log for i, log in enumerate(req.activityLogs)}
+    # -------- PRIMARY CROP --------
+    primary_crop = (
+        req.farmDetails.cropName
+        or extract_crop_name(req.activityLogs)
+        or "Unknown Crop"
     )
 
     primary_result = existing_crop_advisor.advise(
         req.activityLogs,
-        primary_crop_name
+        primary_crop
     )
 
     primary_resp = ExistingCropResponse(**primary_result)
 
-    # ---------- SECONDARY CROPS ----------
+    # -------- SECONDARY CROPS --------
     secondary_responses = []
 
     for sc in req.secondaryCrops:
-        sec_crop_name = sc.cropName or extract_crop_name(
-            {str(i): log for i, log in enumerate(sc.activityLogs)}
+        sec_crop = (
+            sc.cropName
+            or extract_crop_name(sc.activityLogs)
+            or "Secondary Crop"
         )
 
         sec_result = existing_crop_advisor.advise(
             sc.activityLogs,
-            sec_crop_name
+            sec_crop
         )
 
         secondary_responses.append(
@@ -485,6 +398,27 @@ def existing_crop_advice(req: ExistingCropRequest):
         primaryCropAdvice=primary_resp,
         secondaryCropsAdvice=secondary_responses
     )
+
+
+# ==================================================
+# YIELD PREDICTION
+# ==================================================
+
+@app.post("/yield/predict", response_model=YieldPredictionResponse)
+def predict_yield(req: YieldPredictionRequest):
+
+    result = yield_predictor.predict(
+        crop=req.cropName,
+        rainfall=req.avgRainfall,
+        temp=req.avgTemp,
+        farm_size=req.farmSizeAcre
+    )
+
+    return result
+
+
+
+       
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
@@ -563,39 +497,44 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
+
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
 
-    crops = get_user_crops(req.userId)
+    ref = firebase_db.reference(f"Users/{req.userId}")
+    user = ref.get()
+
+    if not user:
+        return {"alerts": []}
+
+    farm = user.get("farmDetails", {})
+    district = farm.get("district")
+
+    crops = []
+
+    if farm.get("cropName"):
+        crops.append(farm["cropName"])
+
+    for c in user.get("secondaryCrops", {}).keys():
+        crops.append(c)
+
     alerts = []
 
-    for c in crops:
-        pest_results = engine.predict(
-            crop_name=c["cropName"],
-            district=c["district"]
+    for crop in crops:
+        results = pest_engine.predict(
+            crop_name=crop,
+            district=district
         )
 
-        for p in pest_results:
+        for r in results:
             alerts.append({
-                "cropName": c["cropName"],
-                **p
+                "cropName": crop,
+                **r
             })
 
     return {"alerts": alerts}
 
-@app.get("/")
 
-@app.post("/yield/predict", response_model=YieldPredictionResponse)
-def predict_yield(req: YieldPredictionRequest):
-
-    result = yield_predictor.predict(
-        crop=req.cropName,
-        rainfall=req.avgRainfall,
-        temp=req.avgTemp,
-        farm_size=req.farmSizeAcre
-    )
-
-    return result
 
 # =====================================================
 # ✅ HEALTH CHECK
@@ -606,6 +545,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
