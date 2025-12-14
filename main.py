@@ -414,7 +414,15 @@ def predict_yield(req: YieldPredictionRequest):
         farm_size=req.farmSizeAcre
     )
 
-    return result
+    # 🔥 FIX: Inject cropName into response
+    return {
+        "cropName": req.cropName,
+        "expectedYieldPerAcre": result["expectedYieldPerAcre"],
+        "totalExpectedYield": result["totalExpectedYield"],
+        "confidence": result["confidence"],
+        "explanation": result["explanation"]
+    }
+
 
 
 
@@ -545,6 +553,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
