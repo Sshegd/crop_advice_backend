@@ -18,17 +18,17 @@ from yield_predioctor import YieldPredictor
 firebase_credentials = json.loads(os.environ["FIREBASE_CREDENTIALS"])
 firebase_db_url = os.environ["FIREBASE_DB_URL"]
 
-cred = credentials.Certificate(firebase_credentials)
-
+# --------------------------------------------------
+# Firebase Init
+# --------------------------------------------------
+cred = credentials.Certificate(json.loads(os.environ["FIREBASE_CREDENTIALS"]))
 if not firebase_admin._apps:
-    firebase_admin.initialize_app(
-        cred,
-        {"databaseURL": firebase_db_url}
-    )
+    firebase_admin.initialize_app(cred, {
+        "databaseURL": os.environ["FIREBASE_DB_URL"]
+    })
 
 firebase_db = db
-
-app = FastAPI(title="Crop Advisory Backend")
+app = FastAPI(title="KrishiSakhi Crop Advisory")
 
 new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
@@ -74,7 +74,50 @@ class ExistingCropResponse(BaseModel):
 class ExistingCropFullResponse(BaseModel):
     primaryCropAdvice: ExistingCropResponse
     secondaryCropsAdvice: List[ExistingCropResponse]
+# --------------------------------------------------
+# ML-LIKE ADVISOR (Lightweight but smart)
+# --------------------------------------------------
+def infer_crop_name(logs: List[Dict]) -> str:
+    for l in logs:
+        if "cropName" in l:
+            return l["cropName"].title()
+    return "Unknown Crop"
+    
+def stage_based_advice(stage: str, crop: str) -> Dict[str, List[str]]:
+    return {
+        "cropManagement": [f"{crop}: Continue proper field operations at {stage} stage."],
+        "nutrientManagement": [f"Apply nutrients suitable for {stage} stage."],
+        "waterManagement": [f"Maintain soil moisture for {stage} stage."],
+        "protectionManagement": [f"Monitor pests during {stage} stage."],
+        "harvestMarketing": [f"Plan harvest & market linkage early."]
+    }
 
+def generate_advice(logs: List[Dict]) -> Dict:
+    crop = infer_crop_name(logs)
+    stages = set(l.get("stage") for l in logs if l.get("stage"))
+
+    advice = {
+        "cropName": crop,
+        "cropManagement": [],
+        "nutrientManagement": [],
+        "waterManagement": [],
+        "protectionManagement": [],
+        "harvestMarketing": []
+    }
+
+    if not stages:
+        advice["cropManagement"].append(
+            "Add farm activities to receive personalized advice."
+        )
+        return advice
+
+    for stage in stages:
+        a = stage_based_advice(stage, crop)
+        for k in advice:
+            if k != "cropName":
+                advice[k].extend(a[k])
+
+    return advice
 
 class NewCropRequest(BaseModel):
     district: str
@@ -360,54 +403,26 @@ rainfall_range = {
 # ================ EXISTING CROP ADVICE =================
 # ======================================================
 
+# --------------------------------------------------
+# EXISTING CROP API
+# --------------------------------------------------
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
 
-    try:
-        lang = req.language or "en"
+    # PRIMARY
+    primary_advice = generate_advice(req.activityLogs)
 
-        # ---------------- PRIMARY CROP ----------------
-        primary_raw = existing_crop_advisor.advise(
-            req.activityLogs,
-            req.farmDetails.cropName
-        )
+    # SECONDARY
+    secondary = []
+    for sc in req.secondaryCrops:
+        adv = generate_advice(sc.activityLogs)
+        adv["cropName"] = sc.cropName.title()
+        secondary.append(adv)
 
-        primary_raw = enrich_existing_crop(
-            primary_raw,
-            lang,
-            req.farmDetails.cropName or "Primary Crop"
-        )
-
-        primary_resp = ExistingCropResponse(**primary_raw)
-
-        # ---------------- SECONDARY CROPS ----------------
-        secondary_responses = []
-
-        for sc in req.secondaryCrops:
-            sc_raw = existing_crop_advisor.advise(
-                sc.activityLogs,
-                sc.cropName
-            )
-
-            sc_raw = enrich_existing_crop(
-                sc_raw,
-                lang,
-                sc.cropName
-            )
-
-            secondary_responses.append(
-                ExistingCropResponse(**sc_raw)
-            )
-
-        return ExistingCropFullResponse(
-            primaryCropAdvice=primary_resp,
-            secondaryCropsAdvice=secondary_responses
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-       
+    return {
+        "primaryCropAdvice": primary_advice,
+        "secondaryCropsAdvice": secondary
+    }       
 
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
@@ -547,6 +562,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
