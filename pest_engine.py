@@ -1,96 +1,67 @@
 # pest_engine.py
 from datetime import datetime
+from typing import Dict, List
 
 
 class PestEngine:
-
-    def __init__(self, pest_db, pest_history, firebase_db):
+    def __init__(self, pest_db: Dict, district_history: Dict):
         self.pest_db = pest_db
-        self.pest_history = pest_history
-        self.db = firebase_db
+        self.district_history = district_history
 
-    # -------------------------------------------------
-    def _risk_label(self, score):
-        if score >= 0.75:
+    def _risk_level(self, score: float) -> str:
+        if score >= 0.7:
             return "HIGH"
         if score >= 0.4:
             return "MEDIUM"
         return "LOW"
 
-    # -------------------------------------------------
-    def predict_for_user(self, user_id: str, month_int: int, lang="en"):
-        """
-        MAIN ENTRY POINT
-        """
-        ref = self.db.reference(f"Users/{user_id}")
-        user = ref.get()
+    def predict(
+        self,
+        cropName: str,
+        district: str = None,
+        soilType: str = None,
+        month: int = None
+    ) -> List[Dict]:
 
-        if not user:
+        crop_key = cropName.lower().strip()
+        if crop_key not in self.pest_db:
             return []
 
-        farm = user.get("farmDetails", {})
-        district = (farm.get("district") or "").lower()
-        soil = (farm.get("soilType") or "").lower()
-
+        month_name = datetime(2000, month or datetime.now().month, 1).strftime("%B")
         alerts = []
 
-        # ---------- PRIMARY CROP ----------
-        primary_crop = (farm.get("cropName") or "").lower()
-        if primary_crop:
-            alerts.extend(
-                self._predict_for_crop(primary_crop, district, soil, month_int)
-            )
-
-        # ---------- SECONDARY CROPS ----------
-        for crop_name in user.get("secondaryCrops", {}).keys():
-            alerts.extend(
-                self._predict_for_crop(crop_name.lower(), district, soil, month_int)
-            )
-
-        return alerts
-
-    # -------------------------------------------------
-    def _predict_for_crop(self, crop, district, soil, month_int):
-        results = []
-
-        month_name = datetime(2000, month_int, 1).strftime("%B")
-
-        # ---------- DISTRICT HISTORY ----------
-        district_pests = (
-            self.pest_history
-                .get(district, {})
-                .get(crop, {})
-        )
-
-        # ---------- PEST DB ----------
-        crop_pests = self.pest_db.get(crop, {})
-
-        for pest_name, rule in crop_pests.items():
-
-            score = 0.3   # BASE SCORE (IMPORTANT)
+        for pest_name, rule in self.pest_db[crop_key].items():
+            score = 0.0
             reasons = []
 
-            # District history boost (MOST IMPORTANT)
-            if pest_name in district_pests:
-                score += 0.4
-                reasons.append("Reported frequently in this district")
+            # 1️⃣ District history (STRONG SIGNAL)
+            if district:
+                d = district.lower()
+                if d in self.district_history:
+                    if crop_key in self.district_history[d]:
+                        if pest_name in self.district_history[d][crop_key]:
+                            score += 0.5
+                            reasons.append("Frequently reported in your district")
 
-            # Seasonal match
-            if month_name in rule.get("season", []):
-                score += 0.2
-                reasons.append(f"Seasonal risk during {month_name}")
+            # 2️⃣ Seasonal relevance
+            if "season" in rule and month_name in rule["season"]:
+                score += 0.3
+                reasons.append(f"Common during {month_name}")
 
-            # Soil match
-            if soil and soil in [s.lower() for s in rule.get("soil", [])]:
-                score += 0.1
-                reasons.append(f"Soil type ({soil}) favors pest")
+            # 3️⃣ Soil suitability
+            if soilType and "soil" in rule:
+                if soilType.lower() in [s.lower() for s in rule["soil"]]:
+                    score += 0.2
+                    reasons.append("Soil conditions favor this pest")
 
-            score = min(score, 1.0)
+            # 🚨 MINIMUM ADVISORY THRESHOLD
+            if score < 0.4:
+                continue
 
-            results.append({
-                "cropName": crop.title(),
+            alerts.append({
+                "cropName": cropName,
                 "pestName": pest_name,
-                "riskLevel": self._risk_label(score),
+                "riskLevel": self._risk_level(score),
                 "score": round(score, 2),
                 "reasons": reasons,
                 "symptoms": rule.get("symptoms", ""),
@@ -98,4 +69,4 @@ class PestEngine:
                 "corrective": rule.get("corrective", "")
             })
 
-        return results
+        return alerts
