@@ -35,8 +35,7 @@ new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
 engine = PestEngine(
     pest_db=PEST_DB,
-    district_history=PEST_HISTORY,
-    firebase_db=firebase_db
+    district_history=PEST_HISTORY
 )
 
 yield_predictor = YieldPredictor()
@@ -184,34 +183,32 @@ class YieldPredictionResponse(BaseModel):
     explanation: str
 
     
-def get_user_crops(firebase_db, user_id: str):
+def get_user_crops(user_id: str):
     ref = firebase_db.reference(f"Users/{user_id}")
     user = ref.get()
-
     if not user:
         return []
 
     crops = []
 
-    # PRIMARY CROP
-    primary_logs = user.get("farmActivityLogs", {})
+    # Primary
     farm = user.get("farmDetails", {})
-
-    if primary_logs:
+    if farm.get("cropName"):
         crops.append({
-            "cropName": farm.get("cropName", "Unknown Crop"),
-            "activityLogs": list(primary_logs.values())
+            "cropName": farm.get("cropName"),
+            "district": farm.get("district")
         })
 
-    # SECONDARY CROPS
+    # Secondary
     for crop, data in user.get("secondaryCrops", {}).items():
         crops.append({
             "cropName": crop,
-            "activityLogs": list(data.get("activityLogs", {}).values())
+            "district": farm.get("district")
         })
 
     return crops
 
+# ---------------- 
 def extract_crop_name(activity_logs: dict) -> str:
     """
     Extract cropName from any activity log safely
@@ -568,8 +565,25 @@ def new_crop_advice(req: NewCropRequest):
 
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
-    alerts = engine.detect_pests(req.userId)
+
+    crops = get_user_crops(req.userId)
+    alerts = []
+
+    for c in crops:
+        pest_results = engine.predict(
+            crop_name=c["cropName"],
+            district=c["district"]
+        )
+
+        for p in pest_results:
+            alerts.append({
+                "cropName": c["cropName"],
+                **p
+            })
+
     return {"alerts": alerts}
+
+@app.get("/")
 
 @app.post("/yield/predict", response_model=YieldPredictionResponse)
 def predict_yield(req: YieldPredictionRequest):
@@ -592,6 +606,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
