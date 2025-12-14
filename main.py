@@ -32,11 +32,12 @@ app = FastAPI(title="KrishiSakhi Crop Advisory")
 
 new_crop_advisor = NewCropAdvisor()
 existing_crop_advisor = ExistingCropAdvisor()
-pest_engine = PestEngine(
+engine = PestEngine(
     pest_db=PEST_DB,
-    pest_history=PEST_HISTORY,
+    district_history=PEST_HISTORY,
     firebase_db=firebase_db
 )
+
 yield_predictor = YieldPredictor()
 
 
@@ -536,45 +537,10 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
-# ---- PEST RISK API ----
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
-
-    user_ref = firebase_db.reference(f"Users/{req.userId}")
-    user = user_ref.get()
-
-    if not user:
-        return {"alerts": []}
-
-    farm = user.get("farmDetails", {})
-    district = farm.get("district")
-    soil = farm.get("soilType")
-
-    alerts = []
-
-    # -------- PRIMARY CROP --------
-    primary_crop = farm.get("cropName")
-    if primary_crop:
-        results = engine.predict(
-            cropName=primary_crop,
-            district=district,
-            soilType=soil,
-            month=datetime.now().month
-        )
-        alerts.extend(results)
-
-    # -------- SECONDARY CROPS --------
-    for crop_name in user.get("secondaryCrops", {}).keys():
-        results = engine.predict(
-            cropName=crop_name,
-            district=district,
-            soilType=soil,
-            month=datetime.now().month
-        )
-        alerts.extend(results)
-
+    alerts = engine.detect_pests(req.userId)
     return {"alerts": alerts}
-
 # =====================================================
 # ✅ HEALTH CHECK
 # =====================================================
@@ -584,6 +550,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
