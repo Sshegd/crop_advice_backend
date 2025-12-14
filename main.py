@@ -570,6 +570,19 @@ def new_crop_advice(req: NewCropRequest):
 def pest_risk(req: PestRiskRequest):
     alerts = engine.detect_pests(req.userId)
     return {"alerts": alerts}
+
+@app.post("/yield/predict", response_model=YieldPredictionResponse)
+def predict_yield(req: YieldPredictionRequest):
+
+    result = yield_predictor.predict(
+        crop=req.cropName,
+        rainfall=req.avgRainfall,
+        temp=req.avgTemp,
+        farm_size=req.farmSizeAcre
+    )
+
+    return result
+
 # =====================================================
 # ✅ HEALTH CHECK
 # =====================================================
@@ -579,6 +592,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
