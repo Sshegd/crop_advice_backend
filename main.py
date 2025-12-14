@@ -211,12 +211,20 @@ def get_user_crops(firebase_db, user_id: str):
 
     return crops
 
-def extract_crop_name(logs, fallback="Unknown Crop"):
-    for log in logs:
+def extract_crop_name(activity_logs: dict) -> str:
+    """
+    Extract cropName from any activity log safely
+    """
+    if not activity_logs:
+        return "Unknown Crop"
+
+    for _, log in activity_logs.items():
         name = log.get("cropName")
         if name:
             return name.title()
-    return fallback
+
+    return "Unknown Crop"
+
 
 # ====== MARKET PRICE (KARNATAKA MANDI AVERAGE ₹/QUINTAL) ======
 # ====== MARKET PRICE (Karnataka Avg ₹/Quintal 2024–25) ======
@@ -550,6 +558,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
