@@ -119,7 +119,7 @@ class PestAlert(BaseModel):
     corrective: str
 
 class PestRiskResponse(BaseModel):
-    alerts: List[PestAlert
+    alerts: List[PestAlert]
 
 
 class YieldPredictionRequest(BaseModel):
@@ -547,6 +547,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
