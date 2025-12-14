@@ -1,72 +1,95 @@
 # pest_engine.py
 from datetime import datetime
-from typing import Dict, List
+from typing import List, Dict
 
 
 class PestEngine:
-    def __init__(self, pest_db: Dict, district_history: Dict):
+
+    def __init__(self, pest_db: Dict, district_history: Dict, firebase_db):
         self.pest_db = pest_db
         self.district_history = district_history
+        self.firebase_db = firebase_db
 
-    def _risk_level(self, score: float) -> str:
-        if score >= 0.7:
-            return "HIGH"
-        if score >= 0.4:
-            return "MEDIUM"
-        return "LOW"
+    # --------------------------------------------------
+    # Fetch crops (PRIMARY + SECONDARY) from Firebase
+    # --------------------------------------------------
+    def get_user_crops(self, user_id: str):
+        ref = self.firebase_db.reference(f"Users/{user_id}")
+        user = ref.get()
 
-    def predict(
-        self,
-        cropName: str,
-        district: str = None,
-        soilType: str = None,
-        month: int = None
-    ) -> List[Dict]:
-
-        crop_key = cropName.lower().strip()
-        if crop_key not in self.pest_db:
+        if not user:
             return []
 
-        month_name = datetime(2000, month or datetime.now().month, 1).strftime("%B")
+        crops = []
+
+        # PRIMARY CROP
+        farm = user.get("farmDetails", {})
+        primary_crop = farm.get("cropName")
+        district = farm.get("district", "").lower()
+        soil = farm.get("soilType", "").lower()
+
+        if primary_crop:
+            crops.append({
+                "cropName": primary_crop.lower(),
+                "district": district,
+                "soil": soil
+            })
+
+        # SECONDARY CROPS
+        secondary = user.get("secondaryCrops", {})
+        for crop_name in secondary.keys():
+            crops.append({
+                "cropName": crop_name.lower(),
+                "district": district,
+                "soil": soil
+            })
+
+        return crops
+
+    # --------------------------------------------------
+    # Core pest detection logic
+    # --------------------------------------------------
+    def detect_pests(self, user_id: str):
+        crops = self.get_user_crops(user_id)
         alerts = []
 
-        for pest_name, rule in self.pest_db[crop_key].items():
-            score = 0.0
-            reasons = []
+        month = datetime.now().strftime("%B")
 
-            # 1️⃣ District history (STRONG SIGNAL)
-            if district:
-                d = district.lower()
-                if d in self.district_history:
-                    if crop_key in self.district_history[d]:
-                        if pest_name in self.district_history[d][crop_key]:
-                            score += 0.5
-                            reasons.append("Frequently reported in your district")
+        for crop in crops:
+            crop_name = crop["cropName"]
+            district = crop["district"]
 
-            # 2️⃣ Seasonal relevance
-            if "season" in rule and month_name in rule["season"]:
-                score += 0.3
-                reasons.append(f"Common during {month_name}")
-
-            # 3️⃣ Soil suitability
-            if soilType and "soil" in rule:
-                if soilType.lower() in [s.lower() for s in rule["soil"]]:
-                    score += 0.2
-                    reasons.append("Soil conditions favor this pest")
-
-            # 🚨 MINIMUM ADVISORY THRESHOLD
-            if score < 0.4:
+            if crop_name not in self.pest_db:
                 continue
 
-            alerts.append({
-                "cropName": cropName,
-                "pestName": pest_name,
-                "riskLevel": self._risk_level(score),
-                "score": round(score, 2),
-                "reasons": reasons,
-                "symptoms": rule.get("symptoms", ""),
-                "preventive": rule.get("preventive", ""),
-                "corrective": rule.get("corrective", "")
-            })
+            for pest_name, rule in self.pest_db[crop_name].items():
+                score = 0
+                reasons = []
+
+                # 🌦 Season check
+                if month in rule.get("season", []):
+                    score += 0.4
+                    reasons.append(f"Seasonal occurrence in {month}")
+
+                # 📍 District history boost
+                hist = self.district_history.get(district, {}).get(crop_name, {})
+                if pest_name in hist:
+                    score += 0.4
+                    reasons.append("Previously reported in your district")
+
+                # 🎯 Risk threshold
+                if score >= 0.4:
+                    risk = "HIGH" if score >= 0.75 else "MEDIUM"
+
+                    alerts.append({
+                        "cropName": crop_name.title(),
+                        "pestName": pest_name,
+                        "riskLevel": risk,
+                        "score": round(score, 2),
+                        "reasons": reasons,
+                        "symptoms": rule.get("symptoms", ""),
+                        "preventive": rule.get("preventive", ""),
+                        "corrective": rule.get("corrective", "")
+                    })
 
         return alerts
