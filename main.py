@@ -13,6 +13,7 @@ from district_pest_history import PEST_HISTORY
 from typing import List
 from firebase_admin import credentials, db
 from yield_predioctor import YieldPredictor
+from utils.crop_utils import extract_crop_name
 
 
 firebase_credentials = json.loads(os.environ["FIREBASE_CREDENTIALS"])
@@ -449,24 +450,44 @@ def existing_crop_advice(req: ExistingCropRequest):
         primaryCropAdvice=primary_resp,
         secondaryCropsAdvice=secondary_responses
     )
+
+
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
 
-    # PRIMARY
-    primary_advice = generate_advice(req.activityLogs)
+    # ---------- PRIMARY CROP ----------
+    primary_crop_name = extract_crop_name(
+        {str(i): log for i, log in enumerate(req.activityLogs)}
+    )
 
-    # SECONDARY
-    secondary = []
+    primary_result = existing_crop_advisor.advise(
+        req.activityLogs,
+        primary_crop_name
+    )
+
+    primary_resp = ExistingCropResponse(**primary_result)
+
+    # ---------- SECONDARY CROPS ----------
+    secondary_responses = []
+
     for sc in req.secondaryCrops:
-        adv = generate_advice(sc.activityLogs)
-        adv["cropName"] = sc.cropName.title()
-        secondary.append(adv)
+        sec_crop_name = sc.cropName or extract_crop_name(
+            {str(i): log for i, log in enumerate(sc.activityLogs)}
+        )
 
-    return {
-        "primaryCropAdvice": primary_advice,
-        "secondaryCropsAdvice": secondary
-    }       
+        sec_result = existing_crop_advisor.advise(
+            sc.activityLogs,
+            sec_crop_name
+        )
 
+        secondary_responses.append(
+            ExistingCropResponse(**sec_result)
+        )
+
+    return ExistingCropFullResponse(
+        primaryCropAdvice=primary_resp,
+        secondaryCropsAdvice=secondary_responses
+    )
 # ================ NEW CROP ADVICE =================
 @app.post("/advice/new", response_model=NewCropResponse)
 def new_crop_advice(req: NewCropRequest):
@@ -558,6 +579,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
