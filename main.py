@@ -12,6 +12,8 @@ from pest_db_extended import PEST_DB
 from district_pest_history import PEST_HISTORY
 from typing import List
 from firebase_admin import credentials, db
+from yield_predictor import YieldPredictor
+
 
 firebase_credentials = json.loads(os.environ["FIREBASE_CREDENTIALS"])
 firebase_db_url = os.environ["FIREBASE_DB_URL"]
@@ -29,16 +31,15 @@ firebase_db = db
 app = FastAPI(title="Crop Advisory Backend")
 
 new_crop_advisor = NewCropAdvisor()
-advisor = ExistingCropAdvisor()
+existing_crop_advisor = ExistingCropAdvisor()
 pest_engine = PestEngine(
     pest_db=PEST_DB,
     pest_history=PEST_HISTORY,
     firebase_db=firebase_db
 )
+yield_predictor = YieldPredictor()
 
 
-
-firebase_db = db
 # ============== MODELS =================
 class FarmDetails(BaseModel):
     cropName: Optional[str] = None
@@ -118,7 +119,25 @@ class PestAlert(BaseModel):
     corrective: str
 
 class PestRiskResponse(BaseModel):
-    alerts: List[PestAlert]
+    alerts: List[PestAlert
+
+
+class YieldPredictionRequest(BaseModel):
+    cropName: str
+    district: str
+    farmSizeAcre: float
+    avgRainfall: float
+    avgTemp: float
+    language: Optional[str] = "en"
+
+
+class YieldPredictionResponse(BaseModel):
+    cropName: str
+    expectedYieldPerAcre: float
+    totalExpectedYield: float
+    confidence: str
+    explanation: str
+
     
 def get_user_crops(firebase_db, user_id: str):
     ref = firebase_db.reference(f"Users/{user_id}")
@@ -291,9 +310,7 @@ def enrich_existing_crop(base_result: dict, lang: str, fallback_crop: str):
     else:
         base_result["estimatedNetProfitPerAcre"] = "Profit data unavailable"
 
-    # 🌐 Language translation (optional)
-    if lang != "en":
-        base_result["cropName"] = CROP_NAME_KN.get(crop_eng, crop_name)
+    
 
     return base_result
 
@@ -346,27 +363,49 @@ rainfall_range = {
 @app.post("/advice/existing/full", response_model=ExistingCropFullResponse)
 def existing_crop_advice(req: ExistingCropRequest):
 
-    # PRIMARY
-    primary = advisor.advise(
-        req.activityLogs,
-        req.farmDetails.cropName
-    )
+    try:
+        lang = req.language or "en"
 
-    primary_resp = ExistingCropResponse(**primary)
-
-    # SECONDARY
-    secondary_resp = []
-    for sc in req.secondaryCrops:
-        sc_result = advisor.advise(sc.activityLogs, sc.cropName)
-        secondary_resp.append(
-            ExistingCropResponse(**sc_result)
+        # ---------------- PRIMARY CROP ----------------
+        primary_raw = existing_crop_advisor.advise(
+            req.activityLogs,
+            req.farmDetails.cropName
         )
 
-    return ExistingCropFullResponse(
-        primaryCropAdvice=primary_resp,
-        secondaryCropsAdvice=secondary_resp
-    )
+        primary_raw = enrich_existing_crop(
+            primary_raw,
+            lang,
+            req.farmDetails.cropName or "Primary Crop"
+        )
 
+        primary_resp = ExistingCropResponse(**primary_raw)
+
+        # ---------------- SECONDARY CROPS ----------------
+        secondary_responses = []
+
+        for sc in req.secondaryCrops:
+            sc_raw = existing_crop_advisor.advise(
+                sc.activityLogs,
+                sc.cropName
+            )
+
+            sc_raw = enrich_existing_crop(
+                sc_raw,
+                lang,
+                sc.cropName
+            )
+
+            secondary_responses.append(
+                ExistingCropResponse(**sc_raw)
+            )
+
+        return ExistingCropFullResponse(
+            primaryCropAdvice=primary_resp,
+            secondaryCropsAdvice=secondary_responses
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
        
 
@@ -475,6 +514,29 @@ def pest_risk(req: PestRiskRequest):
         print("❌ PEST ERROR:", e)
         raise HTTPException(status_code=500, detail="Pest detection failed")
 
+@app.post("/yield/predict", response_model=YieldPredictionResponse)
+def predict_yield(req: YieldPredictionRequest):
+
+    yield_per_acre = yield_predictor.predict(
+        rainfall=req.avgRainfall,
+        temperature=req.avgTemp
+    )
+
+    total_yield = round(yield_per_acre * req.farmSizeAcre, 2)
+
+    explanation = (
+        f"Based on recent weather patterns and historical data, "
+        f"{req.cropName} is expected to yield approximately "
+        f"{yield_per_acre} quintals per acre."
+    )
+
+    return YieldPredictionResponse(
+        cropName=req.cropName,
+        expectedYieldPerAcre=yield_per_acre,
+        totalExpectedYield=total_yield,
+        confidence="Medium",
+        explanation=explanation
+    )
 
 # =====================================================
 # ✅ HEALTH CHECK
@@ -485,6 +547,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
