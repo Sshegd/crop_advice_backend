@@ -12,7 +12,7 @@ from pest_db_extended import PEST_DB
 from district_pest_history import PEST_HISTORY
 from typing import List
 from firebase_admin import credentials, db
-from yield_predictor import YieldPredictor
+from yield_predioctor import YieldPredictor
 
 
 firebase_credentials = json.loads(os.environ["FIREBASE_CREDENTIALS"])
@@ -547,6 +547,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
