@@ -536,56 +536,44 @@ def new_crop_advice(req: NewCropRequest):
 
 # ================ PEST DETECTION LOGIC =================
 
+# ---- PEST RISK API ----
 @app.post("/pest/risk", response_model=PestRiskResponse)
 def pest_risk(req: PestRiskRequest):
-    """
-    Android sends:
-    {
-      "userId": "...",
-      "language": "en"
-    }
 
-    Backend:
-    - Fetches crops from Firebase
-    - Applies pest rules + district history
-    """
+    user_ref = firebase_db.reference(f"Users/{req.userId}")
+    user = user_ref.get()
 
-    try:
-        alerts = pest_engine.predict_for_user(
-            user_id=req.userId,
-            month_int=datetime.now().month,
-            lang=req.language
+    if not user:
+        return {"alerts": []}
+
+    farm = user.get("farmDetails", {})
+    district = farm.get("district")
+    soil = farm.get("soilType")
+
+    alerts = []
+
+    # -------- PRIMARY CROP --------
+    primary_crop = farm.get("cropName")
+    if primary_crop:
+        results = engine.predict(
+            cropName=primary_crop,
+            district=district,
+            soilType=soil,
+            month=datetime.now().month
         )
+        alerts.extend(results)
 
-        return {"alerts": alerts}
+    # -------- SECONDARY CROPS --------
+    for crop_name in user.get("secondaryCrops", {}).keys():
+        results = engine.predict(
+            cropName=crop_name,
+            district=district,
+            soilType=soil,
+            month=datetime.now().month
+        )
+        alerts.extend(results)
 
-    except Exception as e:
-        print("❌ PEST ERROR:", e)
-        raise HTTPException(status_code=500, detail="Pest detection failed")
-
-@app.post("/yield/predict", response_model=YieldPredictionResponse)
-def predict_yield(req: YieldPredictionRequest):
-
-    yield_per_acre = yield_predictor.predict(
-        rainfall=req.avgRainfall,
-        temperature=req.avgTemp
-    )
-
-    total_yield = round(yield_per_acre * req.farmSizeAcre, 2)
-
-    explanation = (
-        f"Based on recent weather patterns and historical data, "
-        f"{req.cropName} is expected to yield approximately "
-        f"{yield_per_acre} quintals per acre."
-    )
-
-    return YieldPredictionResponse(
-        cropName=req.cropName,
-        expectedYieldPerAcre=yield_per_acre,
-        totalExpectedYield=total_yield,
-        confidence="Medium",
-        explanation=explanation
-    )
+    return {"alerts": alerts}
 
 # =====================================================
 # ✅ HEALTH CHECK
@@ -596,6 +584,7 @@ def root():
     return {"status": "running", "message": "Crop advisory backend active"}
 
  
+
 
 
 
